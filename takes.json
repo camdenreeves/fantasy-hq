@@ -19,6 +19,10 @@
     "ts": 1795574400000
   },
   "_modes": {
-    "1389043605447921664": "tank"
+    "1389043605447921664": {
+      "v": "tank",
+      "ts": 1795571357216,
+      "note": "Full tank: draft order is reverse max PF; this season's points have no value."
+    }
   }
 }

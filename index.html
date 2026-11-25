@@ -105,7 +105,7 @@ a{color:inherit}
 
 <script>
 "use strict";
-const APP_VERSION = "2026-11-25.12";
+const APP_VERSION = "2026-11-25.13";
 const SLEEPER_USER = "camdenreeves";
 /* phones cache this page; if a newer version is published, load it */
 async function checkVersion(){
@@ -326,7 +326,13 @@ function analyze(c){
     picks:Array.from({length:rounds},(_,k)=>({round:k+1, owner:pickOwner[(k+1)+":"+r.roster_id]}))}));
 
   // window: saved answer, else a guess
-  const saved = (LS.get("modes",{})[c.id]||{}).v || LS.get("window:"+c.id, null) || (S.baseTakes && S.baseTakes._modes && S.baseTakes._modes[c.id]) || null;
+  // newest wins: a mode you pick in the app, or one you told me in chat
+  const cands = [];
+  const lm = LS.get("modes",{})[c.id]; if(lm) cands.push(lm);
+  const legacy = LS.get("window:"+c.id, null); if(legacy) cands.push({v:legacy, ts:0});
+  const bm = S.baseTakes && S.baseTakes._modes && S.baseTakes._modes[c.id]; if(bm) cands.push(typeof bm==="string" ? {v:bm, ts:1} : bm);
+  cands.sort((x,y)=>(y.ts||0)-(x.ts||0));
+  const saved = cands.length ? cands[0].v : null;
   let guess = "balanced";
   if(myRank && myRank<=playoffTeams) guess = "contend";
   else if(games && (s.wins||0)/games < 0.4) guess = "rebuild";
