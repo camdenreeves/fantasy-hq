@@ -105,7 +105,7 @@ a{color:inherit}
 
 <script>
 "use strict";
-const APP_VERSION = "2026-11-25.7";
+const APP_VERSION = "2026-11-25.8";
 const SLEEPER_USER = "camdenreeves";
 /* phones cache this page; if a newer version is published, load it */
 async function checkVersion(){
@@ -526,6 +526,28 @@ function playerCard(p, i, A){
   </article>`;
 }
 
+/* read a typed answer into a take: 2 Love .. -2 Avoid, null if the text doesn't say */
+function readAnswer(text, cur){
+  const t = " " + text.toLowerCase().replace(/[^a-z' ]/g," ") + " ";
+  const rules = [
+    [2, /\b(love|elite|buy|all in|smash|league winner|stud|must own)\b/],
+    [1, /\b(like|hold|keep|good|solid|bounce back|believe|optimistic|upside|still)\b/],
+    [0, /\b(neutral|unsure|not sure|meh|wait and see|torn|on the fence|no opinion)\b/],
+    [-1, /\b(fade|sell|worried|concerned|doubt|declin|skeptic|cooling|overrated)\w*/],
+    [-2, /\b(avoid|drop|cut|done|hate|bust|washed|get rid)\b/]
+  ];
+  const neg = /\b(not|don't|dont|no longer|never|wouldn't|wouldnt)\s+(\w+\s+)?/;
+  let hits = [];
+  for(const [v, re] of rules){
+    const m = t.match(re); if(!m) continue;
+    const before = t.slice(Math.max(0, m.index-20), m.index);
+    hits.push(neg.test(before + " ") && /\b(not|don't|dont|no longer|never|wouldn't|wouldnt)\s+(\w+\s+)?$/.test(before) ? (v>0 ? -1 : v<0 ? 1 : 0) : v);
+  }
+  const res = hits.length ? Math.max(-2, Math.min(2, Math.round(hits.reduce((a,b)=>a+b,0)/hits.length))) : null;
+  if(cur && /\b(still|keep it|same|no change|yes|agree)\b/.test(t) && (res==null || Math.sign(res)===Math.sign(cur))) return cur;
+  return res;
+}
+
 /* check-ins: the app asks about takes that may be stale and players you have no take on */
 const TAKE_LABEL = ["Avoid","Fade","Neutral","Like","Love"];
 function buildCheckins(A){
@@ -557,7 +579,8 @@ function checkinCard(A){
   if(!qs.length) return "";
   return `<section class="ask"><h3>Check-in</h3><div class="small muted">A few questions so your takes stay current. Answers update your grades right away.</div>
   ${qs.map(q=>`<div style="display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--line);padding-top:8px"><div>${q.text}</div>
-    <div class="takes">${q.kind==="stale"?`<button data-keep="${esc(q.pid)}" class="primary">Yes, keep it</button>`:""}${[2,1,0,-1,-2].map(v=>`<button data-take="${esc(q.pid)}" data-v="${v}" data-force="1" aria-pressed="${q.cur===v}">${TAKE_LABEL[v+2]}</button>`).join("")}<button data-snooze="${esc(q.pid)}">Ask later</button></div></div>`).join("")}
+    <textarea id="ci-${esc(q.pid)}" rows="2" style="width:100%" placeholder="Type your answer, like: still a hold, he should bounce back next year"></textarea>
+    <div class="row"><button class="primary" data-ci="${esc(q.pid)}">Save answer</button><button data-snooze="${esc(q.pid)}">Ask later</button><span class="small muted" id="cimsg-${esc(q.pid)}"></span></div></div>`).join("")}
   </section>`;
 }
 
@@ -659,6 +682,26 @@ document.addEventListener("click", e=>{
     takes[id] = (!force && (v===0 || cur===v)) ? {v:0, ts:Date.now()} : {v, ts:Date.now(), inj:pl?pl.inj:null, team:pl?pl.team:null};
     if(force && v===0){ const sn = LS.get("snooze",{}); sn[id]=Date.now()+30*864e5; LS.set("snooze",sn); }
     LS.set("takes", takes); const y = window.scrollY; S.cur = analyze(S.cur.c); render(); window.scrollTo(0,y); return;
+  }
+  if(t.dataset.ci){
+    const id = t.dataset.ci, box = document.getElementById("ci-"+id), msg = document.getElementById("cimsg-"+id);
+    const text = (box && box.value || "").trim();
+    if(!text){ if(msg) msg.textContent = "Type an answer first."; return; }
+    const cur = (getTakes()[id]||{}).v ?? null;
+    const v = readAnswer(text, cur);
+    const takes = LS.get("takes",{}); const pl = S.players && S.players[id];
+    const prev = takes[id] || {};
+    const answers = (prev.answers||[]).concat([{text, ts:Date.now(), read:v}]).slice(-10);
+    const newV = v==null ? (cur ?? 0) : v;
+    takes[id] = {v:newV, note:text, answers, ts:Date.now(), inj:pl?pl.inj:null, team:pl?pl.team:null};
+    LS.set("takes", takes);
+    if(newV===0){ const sn = LS.get("snooze",{}); sn[id]=Date.now()+30*864e5; LS.set("snooze",sn); }
+    const name = (pl && pl.n) || id;
+    S.cur = analyze(S.cur.c); render();
+    const flash = document.createElement("div"); flash.className = "note small";
+    flash.textContent = v==null ? `Saved your note on ${name}. I couldn't tell if that changes your take, so it stays ${TAKE_LABEL[(cur??0)+2]}.` : `Saved. I read that as ${TAKE_LABEL[v+2]} on ${name}. If that's wrong, answer again or change it in My takes.`;
+    const main = document.getElementById("main"); main.insertBefore(flash, main.firstChild);
+    return;
   }
   if(t.dataset.keep){ const id=t.dataset.keep; const takes=LS.get("takes",{}); const cur=getTakes()[id]||{}; const pl=S.players&&S.players[id];
     takes[id] = {...cur, v:cur.v, ts:Date.now(), inj:pl?pl.inj:null, team:pl?pl.team:null}; delete takes[id].src; LS.set("takes",takes); S.cur=analyze(S.cur.c); render(); return; }
