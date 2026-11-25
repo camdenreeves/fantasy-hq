@@ -114,7 +114,7 @@ async function checkVersion(){
     if(j.v && j.v !== APP_VERSION){
       let n = 0; try{ n = Number(sessionStorage.getItem("vreload")||0); sessionStorage.setItem("vreload", n+1); }catch(_){}
       if(n < 2) location.replace(location.pathname + "?v=" + encodeURIComponent(j.v));
-    }
+    } else { try{ sessionStorage.removeItem("vreload"); }catch(_){} }
   }catch(_){}
 }
 checkVersion();
