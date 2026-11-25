@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f1a2b">
+<title>Waiver Wire HQ</title>
+<style>
+/* Layout: one column of player cards under a sticky league bar; tabs switch views. Accent is the broadcast first-down yellow. */
+:root{
+  --bg:#f3f5f8; --surface:#ffffff; --ink:#0f1a2b; --muted:#5b6678; --line:#dde2ea;
+  --accent:#e8b400; --accent-ink:#1d1600; --good:#137a43; --warn:#b26b00; --bad:#b4232c; --chip:#eef1f6;
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0b1320; --surface:#132033; --ink:#e9eef6; --muted:#9aa6b8; --line:#24344d;
+  --accent:#ffd23f; --accent-ink:#1d1600; --good:#4cc38a; --warn:#f0a43a; --bad:#ff6b6b; --chip:#1b2b44; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0b1320; --surface:#132033; --ink:#e9eef6; --muted:#9aa6b8; --line:#24344d;
+  --accent:#ffd23f; --accent-ink:#1d1600; --good:#4cc38a; --warn:#f0a43a; --bad:#ff6b6b; --chip:#1b2b44; color-scheme:dark}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.45 var(--font);padding-bottom:env(safe-area-inset-bottom,0px)}
+.wrap{max-width:860px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+header{position:sticky;top:0;z-index:5;background:var(--surface);border-bottom:1px solid var(--line);padding-top:env(safe-area-inset-top,0px)}
+header .wrap{display:flex;flex-direction:column;gap:8px;padding-block:10px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.brand{font-weight:800;letter-spacing:.02em;font-size:17px}
+.brand b{background:var(--accent);color:var(--accent-ink);padding:0 6px;border-radius:4px;margin-left:4px}
+select,input,textarea,button{font:inherit;color:inherit}
+select,input[type=text],input[type=search],textarea{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:7px 9px;min-width:0}
+button{background:var(--chip);border:1px solid var(--line);border-radius:8px;padding:6px 10px;cursor:pointer}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:transparent;font-weight:700}
+.tabs{display:flex;gap:4px;overflow-x:auto}
+.tabs button{border:none;background:none;padding:6px 10px;border-radius:6px;color:var(--muted);font-weight:600;white-space:nowrap}
+.tabs button[aria-selected=true]{background:var(--ink);color:var(--surface)}
+.spacer{flex:1}
+.muted{color:var(--muted)}
+.small{font-size:12.5px}
+main{padding-block:14px 40px;display:flex;flex-direction:column;gap:12px}
+.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.stat .k{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.stat .v{font-size:20px;font-weight:800;font-variant-numeric:tabular-nums}
+.ask{background:var(--surface);border:2px solid var(--accent);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.ask h3{margin:0;font-size:15px}
+.note{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.filters{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.filters button[aria-pressed=true]{background:var(--ink);color:var(--surface)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:grid;grid-template-columns:auto 1fr auto;gap:4px 10px;align-items:start}
+.rank{font:700 13px var(--mono);color:var(--muted);padding-top:2px;min-width:22px}
+.pname{font-weight:700;font-size:16px}
+.pmeta{font-size:12.5px;color:var(--muted)}
+.score{text-align:right}
+.score .n{font:800 20px var(--mono)}
+.score .l{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.full{grid-column:1/-1}
+.pills{display:flex;gap:5px;flex-wrap:wrap}
+.pill{font-size:11.5px;padding:2px 7px;border-radius:999px;background:var(--chip);white-space:nowrap}
+.pill.good{color:var(--good);font-weight:700}
+.pill.warn{color:var(--warn);font-weight:700}
+.pill.bad{color:var(--bad);font-weight:700}
+.pill.acc{background:var(--accent);color:var(--accent-ink);font-weight:700}
+.why{font-size:13.5px}
+.bid{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;font-size:13.5px}
+.bid .big{font:800 18px var(--mono)}
+.takes{display:flex;gap:4px;flex-wrap:wrap;align-items:center}
+.takes button{padding:3px 8px;font-size:12.5px}
+.takes button[aria-pressed=true]{background:var(--accent);color:var(--accent-ink);border-color:transparent;font-weight:700}
+.conflict{font-size:13px;border-left:3px solid var(--warn);padding-left:8px}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.tbl{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:10px}
+h2{font-size:16px;margin:6px 0 0}
+.loading{padding:30px 0;text-align:center;color:var(--muted)}
+footer{font-size:12px;color:var(--muted)}
+a{color:inherit}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="row">
+      <span class="brand">Waiver Wire <b>HQ</b></span>
+      <span class="spacer"></span>
+      <select id="league" aria-label="League"></select>
+      <button id="refresh" title="Refresh data">Refresh</button>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="waivers" aria-selected="true">Waivers</button>
+      <button role="tab" data-tab="roster" aria-selected="false">My roster</button>
+      <button role="tab" data-tab="league" aria-selected="false">League FAAB</button>
+      <button role="tab" data-tab="takes" aria-selected="false">My takes</button>
+    </nav>
+  </div>
+</header>
+<div class="wrap"><main id="main"><div class="loading">Loading your leagues…</div></main>
+<footer class="wrap" id="foot"></footer></div>
+
+<script>
+"use strict";
+const SLEEPER_USER = "camdenreeves";
+const API = "https://api.sleeper.app/v1";
+const SKILL = ["QB","RB","WR","TE","K","DEF"];
+const SLOT_ELIG = {QB:["QB"],RB:["RB"],WR:["WR"],TE:["TE"],K:["K"],DEF:["DEF"],FLEX:["RB","WR","TE"],WRRB_FLEX:["RB","WR"],REC_FLEX:["WR","TE"],SUPER_FLEX:["QB","RB","WR","TE"],IDP_FLEX:[]};
+const FINAL_WEEK = 17;
+
+/* ---------- storage helpers (never required) ---------- */
+const LS = {
+  get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch(e){return d}},
+  set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
+};
+function idb(){return new Promise((res,rej)=>{try{const r=indexedDB.open("wwhq",1);r.onupgradeneeded=()=>r.result.createObjectStore("kv");r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)}catch(e){rej(e)}})}
+async function idbGet(k){try{const db=await idb();return await new Promise(r=>{const q=db.transaction("kv").objectStore("kv").get(k);q.onsuccess=()=>r(q.result);q.onerror=()=>r(undefined)})}catch(e){return undefined}}
+async function idbSet(k,v){try{const db=await idb();db.transaction("kv","readwrite").objectStore("kv").put(v,k)}catch(e){}}
+
+const esc = s => String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt = (n,d=1) => (n==null||isNaN(n))?"–":Number(n).toFixed(d);
+const fmtK = n => n>=1000?(n/1000).toFixed(n>=10000?0:1)+"k":String(n);
+async function getJSON(u){const r=await fetch(u);if(!r.ok)throw new Error(r.status+" "+u);return r.json()}
+
+/* ---------- global state ---------- */
+const S = {tab:"waivers", pos:"ALL", q:"", data:{}, players:null, nfl:null, user:null, leagues:[], updated:null};
+
+async function loadPlayers(force){
+  const cached = await idbGet("players");
+  if(!force && cached && Date.now()-cached.t < 12*3600e3) return cached.p;
+  const raw = await getJSON(API+"/players/nfl");
+  const p = {};
+  for(const [id,x] of Object.entries(raw)){
+    const pos = x.position; if(!SKILL.includes(pos)) continue;
+    if(pos!=="DEF" && !x.active) continue;
+    p[id] = {id, n: pos==="DEF" ? (x.first_name+" "+x.last_name+" D/ST") : (x.full_name||((x.first_name||"")+" "+(x.last_name||""))),
+      pos, team:x.team||null, age:x.age||null, inj:x.injury_status||null, injNote:x.injury_body_part||null,
+      yrs:x.years_exp, depth:x.depth_chart_order, fp:x.fantasy_positions||[pos]};
+  }
+  await idbSet("players",{t:Date.now(),p});
+  return p;
+}
+
+async function boot(force){
+  const main = document.getElementById("main");
+  try{
+    S.nfl = await getJSON(API+"/state/nfl");
+    S.user = await getJSON(API+"/user/"+SLEEPER_USER);
+    const season = S.nfl.league_season || S.nfl.season;
+    S.leagues = (await getJSON(`${API}/user/${S.user.user_id}/leagues/nfl/${season}`)).filter(l=>l.settings.type===2 || true);
+    const sel = document.getElementById("league");
+    const saved = LS.get("league", null);
+    sel.innerHTML = S.leagues.map(l=>`<option value="${esc(l.league_id)}">${esc(l.name)}</option>`).join("");
+    if(saved && S.leagues.some(l=>l.league_id===saved)) sel.value = saved;
+    main.innerHTML = '<div class="loading">Loading players, values and projections…</div>';
+    S.players = await loadPlayers(force);
+    if(force) S.data = {};
+    await loadLeague(sel.value, force);
+  }catch(e){
+    main.innerHTML = `<div class="note">Couldn't load data: ${esc(e.message)}. Check your connection and tap Refresh.</div>`;
+    console.error(e);
+  }
+}
+
+async function fcValues(dynasty, qbs, teams){
+  const key = `fc:${dynasty}:${qbs}:${teams}`;
+  const c = LS.get(key,null);
+  if(c && Date.now()-c.t < 3600e3) return c.v;
+  const raw = await getJSON(`https://api.fantasycalc.com/values/current?isDynasty=${dynasty}&numQbs=${qbs}&numTeams=${teams}&ppr=1`);
+  const v = {};
+  for(const r of raw){ if(r.player && r.player.sleeperId) v[r.player.sleeperId] = {v:r.value, pr:r.positionRank, tr:r.trend30Day}; }
+  LS.set(key,{t:Date.now(),v});
+  return v;
+}
+
+function scorePts(stats, sc){
+  if(!stats) return null;
+  let t = 0, hit = false;
+  for(const k in sc){ const s = stats[k]; if(typeof s==="number"){ t += s*sc[k]; hit = true; } }
+  if(!hit) return stats.pts_ppr ?? null;
+  return t;
+}
+
+async function weekPts(kind, season, week, sc){
+  // kind: projections | stats ; returns {pid: pts}
+  const key = `${kind}:${season}:${week}`;
+  let rows = S.data[key];
+  if(!rows){
+    const qs = SKILL.map(p=>"position[]="+p).join("&");
+    rows = await getJSON(`https://api.sleeper.app/${kind}/nfl/${season}/${week}?season_type=regular&${qs}`);
+    S.data[key] = rows;
+  }
+  const out = {};
+  for(const r of rows){ const pts = scorePts(r.stats, sc); if(pts!=null) out[r.player_id] = {pts, gp:r.stats.gp ?? r.stats.gms_active}; }
+  return out;
+}
+
+async function loadLeague(id, force){
+  LS.set("league", id);
+  const main = document.getElementById("main");
+  main.innerHTML = '<div class="loading">Crunching this league…</div>';
+  const L = S.leagues.find(l=>l.league_id===id);
+  const season = S.nfl.season;
+  const week = Math.max(1, S.nfl.week || S.nfl.leg || 1);
+  const [rosters, users] = await Promise.all([getJSON(`${API}/league/${id}/rosters`), getJSON(`${API}/league/${id}/users`)]);
+  const sc = L.scoring_settings || {};
+  const qbs = (L.roster_positions.filter(p=>p==="QB"||p==="SUPER_FLEX").length>=2) ? 2 : 1;
+  const teams = L.total_rosters;
+  const weeks = []; for(let w=week; w<=FINAL_WEEK; w++) weeks.push(w);
+  const pastWeeks = []; for(let w=Math.max(1,week-3); w<week; w++) pastWeeks.push(w);
+  const txWeeks = []; for(let w=1; w<=week; w++) txWeeks.push(w);
+  const [dyn, red, trend, projArr, statArr, txArr] = await Promise.all([
+    fcValues(true,qbs,teams).catch(()=>({})),
+    fcValues(false,qbs,teams).catch(()=>({})),
+    getJSON(`${API}/players/nfl/trending/add?lookback_hours=24&limit=300`).catch(()=>[]),
+    Promise.all(weeks.map(w=>weekPts("projections",season,w,sc).catch(()=>({})))),
+    Promise.all(pastWeeks.map(w=>weekPts("stats",season,w,sc).catch(()=>({})))),
+    Promise.all(txWeeks.map(w=>getJSON(`${API}/league/${id}/transactions/${w}`).catch(()=>[])))
+  ]);
+  const ctx = {L, id, rosters, users, sc, qbs, teams, week, weeks, pastWeeks, dyn, red, trend, projArr, statArr, tx: txArr.flat()};
+  S.cur = analyze(ctx);
+  S.updated = new Date();
+  render();
+}
+
+/* ---------- analysis ---------- */
+function analyze(c){
+  const {L, rosters, users, week} = c;
+  const P = S.players;
+  const me = rosters.find(r=>r.owner_id===S.user.user_id || (r.co_owners||[]).includes(S.user.user_id));
+  const userName = uid => { const u = c.users.find(x=>x.user_id===uid); return u ? (u.metadata?.team_name || u.display_name) : "Unknown"; };
+  const rosterOf = {}; for(const r of rosters) for(const p of (r.players||[])) rosterOf[p] = r.roster_id;
+  const eligible = new Set(); L.roster_positions.forEach(s=>(SLOT_ELIG[s]||[]).forEach(p=>eligible.add(p)));
+  const trendMap = {}; c.trend.forEach((t,i)=>trendMap[t.player_id]={count:t.count, rank:i+1});
+  const playoffStart = L.settings.playoff_week_start || 15;
+  const s = me ? me.settings : {};
+  const games = (s.wins||0)+(s.losses||0)+(s.ties||0);
+  const standings = [...rosters].sort((a,b)=>(b.settings.wins-a.settings.wins)||((b.settings.fpts+b.settings.fpts_decimal/100)-(a.settings.fpts+a.settings.fpts_decimal/100)));
+  const myRank = me ? standings.findIndex(r=>r.roster_id===me.roster_id)+1 : null;
+  const playoffTeams = L.settings.playoff_teams || 6;
+
+  // window: saved answer, else a guess
+  const saved = LS.get("window:"+c.id, null);
+  let guess = "balanced";
+  if(myRank && myRank<=playoffTeams) guess = "contend";
+  else if(games && (s.wins||0)/games < 0.4) guess = "rebuild";
+  const win = saved || guess;
+  const W = {contend:{now:.7,dyn:.3}, balanced:{now:.5,dyn:.5}, rebuild:{now:.2,dyn:.8}}[win];
+
+  // per-player numbers
+  function info(pid){
+    const p = P[pid] || {id:pid, n:pid, pos:"?", team:null};
+    const ros = c.projArr.map(m=>m[pid]?.pts ?? 0);
+    const remainReg = c.weeks.filter(w=>w<playoffStart).length;
+    const rosAvg = ros.length ? ros.reduce((a,b)=>a+b,0)/ros.length : 0;
+    const playoffAvg = (()=>{const idx=c.weeks.map((w,i)=>w>=playoffStart?i:-1).filter(i=>i>=0);return idx.length?idx.reduce((a,i)=>a+ros[i],0)/idx.length:rosAvg})();
+    const next = ros[0] ?? 0;
+    const last = c.statArr.map(m=>m[pid]).filter(Boolean);
+    const l3 = last.length ? last.reduce((a,b)=>a+b.pts,0)/last.length : null;
+    return {...p, pid, next, rosAvg, playoffAvg, l3, dyn:c.dyn[pid]?.v||0, dynPR:c.dyn[pid]?.pr, red:c.red[pid]?.v||0,
+      trend:trendMap[pid]?.count||0, trendRank:trendMap[pid]?.rank||null, owner:rosterOf[pid]||null, remainReg};
+  }
+
+  // my optimal lineup by rest-of-season average (to find the bar each position must clear)
+  const myIds = me ? (me.players||[]) : [];
+  const taxi = new Set(me?.taxi||[]), reserve = new Set(me?.reserve||[]);
+  const mine = myIds.map(info);
+  const lineupSlots = L.roster_positions.filter(s=>SLOT_ELIG[s] && SLOT_ELIG[s].length);
+  const order = [...lineupSlots].sort((a,b)=>SLOT_ELIG[a].length-SLOT_ELIG[b].length);
+  const pool = mine.filter(p=>!taxi.has(p.pid) && !reserve.has(p.pid) && p.inj!=="Out" && p.inj!=="IR").sort((a,b)=>b.rosAvg-a.rosAvg);
+  const used = new Set(); const starters = [];
+  for(const slot of order){
+    const pick = pool.find(p=>!used.has(p.pid) && SLOT_ELIG[slot].includes(p.pos));
+    if(pick){ used.add(pick.pid); starters.push({slot, p:pick}); } else starters.push({slot, p:null});
+  }
+  const bar = {}; // lowest starter a position could replace
+  for(const pos of eligible){
+    const cands = starters.filter(s=>SLOT_ELIG[s.slot].includes(pos));
+    let worst = null;
+    for(const s of cands){ const v = s.p ? s.p.rosAvg : 0; if(!worst || v < worst.v) worst = {v, p:s.p, slot:s.slot}; }
+    bar[pos] = worst;
+  }
+  const starterIds = new Set(starters.filter(s=>s.p).map(s=>s.p.pid));
+
+  // free agents
+  const fa = Object.keys(P).filter(pid=>!rosterOf[pid] && eligible.has(P[pid].pos) && (P[pid].team || P[pid].pos==="DEF")).map(info)
+    .filter(p=>p.dyn>0 || p.rosAvg>=2 || p.trend>0);
+
+  const maxDyn = Math.max(1, ...fa.map(p=>p.dyn));
+  const maxNow = Math.max(1, ...fa.map(p=>p.rosAvg));
+  const maxTrend = Math.max(1, ...fa.map(p=>p.trend));
+  const takes = LS.get("takes", {});
+
+  function grade(p, isMine){
+    const dynS = 100*Math.sqrt(p.dyn/maxDyn);
+    const nowBase = win==="contend" ? (p.rosAvg*.5+p.playoffAvg*.5) : p.rosAvg;
+    const nowS = 100*Math.min(1, nowBase/maxNow);
+    const b = bar[p.pos];
+    const upgrade = b ? (win==="contend"?(p.rosAvg*.5+p.playoffAvg*.5):p.rosAvg) - b.v : -99;
+    const starts = !isMine && upgrade > 0.3;
+    const trendS = 100*Math.sqrt(p.trend/maxTrend);
+    let score = W.now*nowS + W.dyn*dynS + 0.08*trendS + (starts ? Math.min(12, upgrade*3)*W.now*1.4 : 0);
+    if(p.inj==="IR" || p.inj==="Out") score -= W.now*15;
+    if(p.pos==="K" || p.pos==="DEF") score = Math.min(score, win==="contend"? 55 : 25);
+    const t = takes[p.pid];
+    if(t) score += t.v*7;
+    score = Math.max(0, Math.min(100, score));
+    return {dynS, nowS, trendS, upgrade, starts, score, take:t||null};
+  }
+  fa.forEach(p=>Object.assign(p, grade(p,false)));
+  fa.sort((a,b)=>b.score-a.score);
+  mine.forEach(p=>Object.assign(p, grade(p,true)));
+
+  // drop candidates: bench, not taxi or IR, lowest score
+  const dropPool = mine.filter(p=>!starterIds.has(p.pid) && !taxi.has(p.pid) && !reserve.has(p.pid)).sort((a,b)=>a.score-b.score);
+  const activeCount = myIds.filter(x=>!taxi.has(x)&&!reserve.has(x)).length;
+  const rosterFull = activeCount >= L.roster_positions.length;
+
+  // FAAB
+  const budget = L.settings.waiver_budget || 0;
+  const minBid = L.settings.waiver_bid_min ?? 0;
+  const faab = r => budget - (r.settings.waiver_budget_used||0);
+  const myFaab = me ? faab(me) : 0;
+  const rivals = rosters.filter(r=>r!==me).map(r=>({name:userName(r.owner_id), faab:faab(r), w:r.settings.wins, l:r.settings.losses})).sort((a,b)=>b.faab-a.faab);
+  const rivalMax = rivals.length ? rivals[0].faab : 0;
+  const history = c.tx.filter(t=>t.type==="waiver" && t.status==="complete" && t.adds).map(t=>{
+    const pid = Object.keys(t.adds)[0];
+    const r = rosters.find(x=>x.roster_id===t.adds[pid]);
+    return {pid, name:(P[pid]?.n)||pid, pos:P[pid]?.pos||"", bid:t.settings?.waiver_bid ?? 0, week:t.leg, team:r?userName(r.owner_id):"", dyn:c.dyn[pid]?.v||0, mine: r && me && r.roster_id===me.roster_id};
+  }).sort((a,b)=>b.week-a.week || b.bid-a.bid);
+  const paid = history.filter(h=>h.bid>0).map(h=>h.bid).sort((a,b)=>a-b);
+  const median = paid.length ? paid[Math.floor(paid.length/2)] : null;
+  const p90 = paid.length ? paid[Math.floor(paid.length*.9)] : null;
+
+  const lateFactor = week >= 10 ? 1.35 : 1;
+  function bidFor(p, rank){
+    if(myFaab <= 0 || myFaab < minBid) return {none:true};
+    let lo, hi, tier;
+    if(p.score >= 75 || rank===0){ tier="Priority"; lo=.22; hi=.40; }
+    else if(p.score >= 60){ tier="Strong"; lo=.10; hi=.22; }
+    else if(p.score >= 45){ tier="Solid"; lo=.04; hi=.10; }
+    else { tier="Dart"; lo=0; hi=.04; }
+    lo *= lateFactor; hi *= lateFactor;
+    let a = Math.round(myFaab*lo), b = Math.round(myFaab*hi);
+    // market check from this league's history
+    const comps = history.filter(h=>h.bid>0 && h.pos===p.pos && Math.abs(h.dyn - p.dyn) <= Math.max(400, p.dyn*.35));
+    let market = null;
+    if(comps.length>=2){ const bs = comps.map(h=>h.bid).sort((x,y)=>x-y); market = bs[Math.floor(bs.length/2)]; a = Math.round((a+market)/2); b = Math.max(b, market+1); }
+    const cap = Math.min(myFaab, rivalMax+1);
+    a = Math.max(minBid, Math.min(a, cap)); b = Math.max(a, Math.min(b, cap));
+    const mid = Math.round((a+b)/2);
+    return {tier, lo:a, hi:b, mid, market, comps:comps.length, capped: b===cap && cap<myFaab};
+  }
+  fa.forEach((p,i)=>p.bid = bidFor(p,i));
+
+  function confidence(p){
+    let n = 0;
+    if(p.dynS>=55) n++;
+    if(p.nowS>=55) n++;
+    if(p.trendRank && p.trendRank<=60) n++;
+    if(p.starts) n++;
+    if(p.take && p.take.v>0) n++;
+    if(p.inj==="Out"||p.inj==="IR"||p.inj==="Doubtful") n--;
+    return n>=3?"High":n===2?"Medium":"Low";
+  }
+  fa.forEach(p=>p.conf=confidence(p));
+
+  return {c, L, me, mine, fa, bar, starters, starterIds, dropPool, rosterFull, activeCount, myFaab, minBid, budget, rivals, rivalMax, history, median, p90,
+    win, guess, savedWin:!!saved, myRank, playoffTeams, playoffStart, week, userName, taxi, reserve};
+}
+
+/* ---------- rendering ---------- */
+function takeButtons(pid){
+  const t = (LS.get("takes",{})[pid]||{}).v;
+  const opts = [[2,"Love"],[1,"Like"],[-1,"Fade"],[-2,"Avoid"]];
+  return `<div class="takes"><span class="small muted">Your take:</span>${opts.map(([v,l])=>`<button data-take="${esc(pid)}" data-v="${v}" aria-pressed="${t===v}">${l}</button>`).join("")}</div>`;
+}
+
+function reasons(p, A){
+  const out = [];
+  const b = A.bar[p.pos];
+  if(p.starts && b && b.p) out.push(`Would start over ${esc(b.p.n)} (+${fmt(p.upgrade)} pts/wk rest of season).`);
+  else if(p.starts) out.push(`Fills an open ${esc(b?.slot||p.pos)} spot in your lineup.`);
+  else if(b && b.p && p.pos!=="K" && p.pos!=="DEF") out.push(`Depth: ${fmt(-p.upgrade)} pts/wk behind your weakest ${esc(p.pos)}-eligible starter.`);
+  if(p.dyn) out.push(`Dynasty value ${p.dyn.toLocaleString()}${p.dynPR?` (${esc(p.pos)}${p.dynPR})`:""}${p.age?`, age ${p.age}`:""}.`);
+  else if(p.age) out.push(`No dynasty market value yet, age ${p.age}.`);
+  if(p.trend) out.push(`${fmtK(p.trend)} Sleeper adds in the last 24h${p.trendRank<=25?" (top 25)":""}.`);
+  if(p.inj) out.push(`Injury: ${esc(p.inj)}${p.injNote?` (${esc(p.injNote)})`:""}.`);
+  return out.join(" ");
+}
+
+function bidLine(p, A){
+  const bd = p.bid;
+  if(bd.none){
+    return `<div class="bid"><span class="pill warn">No FAAB</span><span>You have $${A.myFaab} and the minimum bid is $${A.minBid}. You can only add him as a free agent after waivers clear.</span></div>`;
+  }
+  return `<div class="bid"><span class="pill acc">${bd.tier}</span><span>Bid <span class="big">$${bd.mid}</span></span><span class="muted">range $${bd.lo}–$${bd.hi}</span>${bd.market!=null?`<span class="muted small">League market for similar ${esc(p.pos)}s: $${bd.market} (${bd.comps} claims)</span>`:""}${bd.capped?`<span class="muted small">Capped at richest rival's budget +$1</span>`:""}</div>`;
+}
+
+function conflictNote(p){
+  if(!p.take) return "";
+  const v = p.take.v;
+  const consensus = p.score - v*7;
+  if(v>0 && consensus < 40) return `<div class="conflict full">You like him more than the data does. Consensus value and projections put him near the bottom of this list. Your call matters here, but keep the bid small.</div>`;
+  if(v<0 && consensus >= 65) return `<div class="conflict full">You're lower on him than the data. He grades well on value and projections. If you're passing, make sure a rival with FAAB won't grab him.</div>`;
+  return "";
+}
+
+function playerCard(p, i, A){
+  const injC = p.inj ? (p.inj==="Questionable"?"warn":"bad") : "";
+  const drop = A.rosterFull && A.dropPool[0] ? `<div class="small muted full">Roster is full. Suggested drop: <b>${esc(A.dropPool[0].n)}</b> (${esc(A.dropPool[0].pos)}, grade ${fmt(A.dropPool[0].score,0)}).</div>` : "";
+  return `<article class="card">
+    <div class="rank">${i+1}</div>
+    <div style="min-width:0">
+      <div class="pname">${esc(p.n)}</div>
+      <div class="pmeta">${esc(p.pos)} · ${esc(p.team||"FA")}${p.age?` · ${p.age}y`:""} · next wk ${fmt(p.next)} · ROS ${fmt(p.rosAvg)}/wk${p.l3!=null?` · last 3 ${fmt(p.l3)}`:""}</div>
+    </div>
+    <div class="score"><div class="n">${fmt(p.score,0)}</div><div class="l">${p.conf} conf.</div></div>
+    <div class="pills full">
+      ${p.starts?'<span class="pill good">Starts for you</span>':""}
+      ${p.dynS>=55?'<span class="pill">Dynasty asset</span>':""}
+      ${p.trendRank&&p.trendRank<=30?'<span class="pill warn">Hot add</span>':""}
+      ${p.inj?`<span class="pill ${injC}">${esc(p.inj)}</span>`:""}
+      ${p.take?`<span class="pill acc">${["Avoid","Fade","","Like","Love"][p.take.v+2]}</span>`:""}
+    </div>
+    <div class="why full">${reasons(p,A)}</div>
+    <div class="full">${bidLine(p,A)}</div>
+    ${conflictNote(p)}
+    ${drop}
+    <div class="full row" style="justify-content:space-between">${takeButtons(p.pid)}<a class="small muted" href="https://news.google.com/search?q=${encodeURIComponent(p.n+" "+(p.pos==="DEF"?"":"NFL"))}" target="_blank" rel="noopener">Latest news ↗</a></div>
+  </article>`;
+}
+
+function askCard(A){
+  if(A.savedWin) return "";
+  const name = esc(A.L.name);
+  return `<section class="ask"><h3>Quick question about ${name}</h3>
+    <div>You're ${A.me?A.me.settings.wins+"-"+A.me.settings.losses:""}${A.myRank?`, ${A.myRank}${["th","st","nd","rd"][A.myRank%10>3||[11,12,13].includes(A.myRank%100)?0:A.myRank%10]} of ${A.L.total_rosters}`:""}, and ${A.playoffTeams} teams make the playoffs. Are you trying to win this year or build for next year? I guessed <b>${A.guess==="contend"?"win now":A.guess==="rebuild"?"rebuild":"balanced"}</b>.</div>
+    <div class="row"><button data-win="contend">Win now</button><button data-win="balanced">Balanced</button><button data-win="rebuild">Rebuild</button></div></section>`;
+}
+
+function renderWaivers(A){
+  const positions = ["ALL", ...SKILL.filter(p=>A.fa.some(x=>x.pos===p))];
+  let list = A.fa.filter(p=>S.pos==="ALL"||p.pos===S.pos);
+  if(S.q) list = list.filter(p=>p.n.toLowerCase().includes(S.q.toLowerCase()));
+  list = list.slice(0, 40);
+  const winLabel = {contend:"Win now",balanced:"Balanced",rebuild:"Rebuild"}[A.win];
+  const waiverDay = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][A.L.settings.waiver_day_of_week ?? 3];
+  return `
+  <div class="summary">
+    <div class="stat"><div class="k">Record</div><div class="v">${A.me?`${A.me.settings.wins}-${A.me.settings.losses}`:"–"}</div></div>
+    <div class="stat"><div class="k">Your FAAB</div><div class="v">$${A.myFaab}</div></div>
+    <div class="stat"><div class="k">Richest rival</div><div class="v">$${A.rivalMax}</div></div>
+    <div class="stat"><div class="k">Mode</div><div class="v" style="font-size:16px">${winLabel} <button class="small" data-reask="1" style="padding:1px 6px">change</button></div></div>
+  </div>
+  ${askCard(A)}
+  <div class="note small">Week ${A.week}. Waivers run ${waiverDay}. Grades blend your mode (${Math.round({contend:70,balanced:50,rebuild:20}[A.win])}% this season, ${Math.round({contend:30,balanced:50,rebuild:80}[A.win])}% dynasty value), your lineup needs, trending adds and your takes. ${A.L.roster_positions.includes("SUPER_FLEX")?"Superflex values are used.":""} ${A.rosterFull?`Your roster is full, so every add needs a drop.`:""}</div>
+  <div class="filters">${positions.map(p=>`<button data-pos="${p}" aria-pressed="${S.pos===p}">${p}</button>`).join("")}
+    <input type="search" id="q" placeholder="Search free agents" value="${esc(S.q)}" style="flex:1;min-width:140px"></div>
+  ${list.length?list.map((p,i)=>playerCard(p,i,A)).join(""):'<div class="note">No free agents match.</div>'}`;
+}
+
+function renderRoster(A){
+  const rows = [...A.mine].sort((a,b)=>b.score-a.score);
+  const tag = p => A.taxi.has(p.pid)?"Taxi":A.reserve.has(p.pid)?"IR":A.starterIds.has(p.pid)?"Starter":"Bench";
+  return `<h2>Your roster, graded the same way as free agents</h2>
+  <div class="note small">Lowest-graded bench players are your drop candidates. Taxi and IR players are never suggested as drops.</div>
+  <div class="tbl"><table><thead><tr><th>Player</th><th>Role</th><th class="num">Grade</th><th class="num">ROS/wk</th><th class="num">Dyn value</th><th>Take</th></tr></thead><tbody>
+  ${rows.map(p=>`<tr><td>${esc(p.n)} <span class="muted small">${esc(p.pos)} ${esc(p.team||"")}</span></td><td>${tag(p)}${A.dropPool.slice(0,3).some(d=>d.pid===p.pid)?' <span class="pill bad">Drop cand.</span>':""}</td><td class="num">${fmt(p.score,0)}</td><td class="num">${fmt(p.rosAvg)}</td><td class="num">${p.dyn?p.dyn.toLocaleString():"–"}</td><td>${p.take?["Avoid","Fade","","Like","Love"][p.take.v+2]:""}</td></tr>`).join("")}
+  </tbody></table></div>`;
+}
+
+function renderLeague(A){
+  return `<h2>Who has FAAB left</h2>
+  <div class="tbl"><table><thead><tr><th>Team</th><th class="num">Record</th><th class="num">FAAB</th></tr></thead><tbody>
+  <tr><td><b>You</b></td><td class="num">${A.me?A.me.settings.wins+"-"+A.me.settings.losses:""}</td><td class="num"><b>$${A.myFaab}</b></td></tr>
+  ${A.rivals.map(r=>`<tr><td>${esc(r.name)}</td><td class="num">${r.w}-${r.l}</td><td class="num">$${r.faab}</td></tr>`).join("")}
+  </tbody></table></div>
+  <h2>Winning bids this season</h2>
+  <div class="note small">${A.history.filter(h=>h.bid>0).length} paid claims. Median winning bid $${A.median??"–"}, 90th percentile $${A.p90??"–"}.</div>
+  <div class="tbl"><table><thead><tr><th class="num">Wk</th><th>Player</th><th>Team</th><th class="num">Bid</th></tr></thead><tbody>
+  ${A.history.slice(0,60).map(h=>`<tr><td class="num">${h.week}</td><td>${esc(h.name)} <span class="muted small">${esc(h.pos)}</span></td><td>${h.mine?"<b>You</b>":esc(h.team)}</td><td class="num">$${h.bid}</td></tr>`).join("")}
+  </tbody></table></div>`;
+}
+
+function renderTakes(){
+  const takes = LS.get("takes",{});
+  const ids = Object.keys(takes).sort((a,b)=>takes[b].v-takes[a].v);
+  const P = S.players||{};
+  return `<h2>Your takes</h2>
+  <div class="note small">Tap Love, Like, Fade or Avoid on any player. Each step moves his grade by 7 points, and the app flags it when your take disagrees with the data. Takes are saved on this device. Use the box below to copy them between your phone and computer.</div>
+  ${ids.length?`<div class="tbl"><table><thead><tr><th>Player</th><th>Take</th><th></th></tr></thead><tbody>${ids.map(id=>`<tr><td>${esc(P[id]?.n||id)} <span class="muted small">${esc(P[id]?.pos||"")}</span></td><td>${["Avoid","Fade","","Like","Love"][takes[id].v+2]}</td><td><button data-take="${esc(id)}" data-v="0">Clear</button></td></tr>`).join("")}</tbody></table></div>`:'<div class="note">No takes yet. Add them from the Waivers tab.</div>'}
+  <h2>Move takes between devices</h2>
+  <div class="row"><button id="copyTakes">Copy my takes</button><span class="small muted" id="copyMsg"></span></div>
+  <textarea id="takesBox" rows="3" style="width:100%" placeholder="Paste takes copied from your other device, then tap Import"></textarea>
+  <div class="row"><button id="importTakes" class="primary">Import</button><span class="small muted" id="importMsg"></span></div>`;
+}
+
+function render(){
+  const A = S.cur; if(!A) return;
+  document.querySelectorAll(".tabs button").forEach(b=>b.setAttribute("aria-selected", String(b.dataset.tab===S.tab)));
+  const main = document.getElementById("main");
+  if(!A.me){ main.innerHTML = '<div class="note">I could not find your team in this league.</div>'; return; }
+  main.innerHTML = S.tab==="waivers"?renderWaivers(A):S.tab==="roster"?renderRoster(A):S.tab==="league"?renderLeague(A):renderTakes();
+  document.getElementById("foot").innerHTML = `Data: Sleeper (rosters, transactions, projections, trending adds) and FantasyCalc (dynasty and redraft values). Updated ${S.updated.toLocaleTimeString([], {hour:"numeric",minute:"2-digit"})}. Refreshes hourly while open. Suggestions only. This app never makes moves.`;
+}
+
+/* ---------- events ---------- */
+document.addEventListener("click", e=>{
+  const t = e.target.closest("button"); if(!t) return;
+  if(t.dataset.tab){ S.tab = t.dataset.tab; render(); return; }
+  if(t.dataset.pos){ S.pos = t.dataset.pos; render(); return; }
+  if(t.dataset.win){ LS.set("window:"+S.cur.c.id, t.dataset.win); S.cur = analyze(S.cur.c); render(); return; }
+  if(t.dataset.reask){ try{localStorage.removeItem("window:"+S.cur.c.id)}catch(_){}; S.cur = analyze(S.cur.c); render(); return; }
+  if(t.dataset.take){
+    const takes = LS.get("takes",{}); const v = Number(t.dataset.v); const id = t.dataset.take;
+    if(v===0 || (takes[id] && takes[id].v===v)) delete takes[id]; else takes[id] = {v, ts:Date.now()};
+    LS.set("takes", takes); const y = window.scrollY; S.cur = analyze(S.cur.c); render(); window.scrollTo(0,y); return;
+  }
+  if(t.id==="refresh"){ boot(true); return; }
+  if(t.id==="copyTakes"){
+    const txt = JSON.stringify(LS.get("takes",{}));
+    const box = document.getElementById("takesBox");
+    navigator.clipboard?.writeText(txt).then(()=>{document.getElementById("copyMsg").textContent="Copied."}).catch(()=>{box.value=txt;box.select();document.getElementById("copyMsg").textContent="Select-all and copy the text in the box."});
+    return;
+  }
+  if(t.id==="importTakes"){
+    try{ const inc = JSON.parse(document.getElementById("takesBox").value); const takes = LS.get("takes",{});
+      let n=0; for(const [k,v] of Object.entries(inc)){ if(v && typeof v.v==="number"){ if(!takes[k]||(v.ts||0)>(takes[k].ts||0)){takes[k]=v;n++} } }
+      LS.set("takes",takes); S.cur = analyze(S.cur.c); render(); document.getElementById("importMsg").textContent=`Imported ${n} takes.`;
+    }catch(err){ document.getElementById("importMsg").textContent="That text isn't a takes export. Copy it again from your other device."; }
+  }
+});
+document.addEventListener("input", e=>{
+  if(e.target.id==="q"){ S.q = e.target.value; const pos = e.target.selectionStart; render(); const q=document.getElementById("q"); q.focus(); q.setSelectionRange(pos,pos); }
+});
+document.getElementById("league").addEventListener("change", e=>loadLeague(e.target.value).catch(err=>{document.getElementById("main").innerHTML=`<div class="note">Couldn't load that league: ${esc(err.message)}</div>`}));
+setInterval(()=>{ if(document.visibilityState==="visible" && S.cur) loadLeague(S.cur.c.id).catch(()=>{}); }, 3600e3);
+boot(false);
+</script>
+</body>
+</html>
