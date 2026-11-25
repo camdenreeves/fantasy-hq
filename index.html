@@ -105,7 +105,7 @@ a{color:inherit}
 
 <script>
 "use strict";
-const APP_VERSION = "2026-11-25.8";
+const APP_VERSION = "2026-11-25.9";
 const SLEEPER_USER = "camdenreeves";
 /* phones cache this page; if a newer version is published, load it */
 async function checkVersion(){
@@ -437,8 +437,30 @@ function analyze(c){
   }
   fa.forEach(p=>p.conf=confidence(p));
 
+  // move plan: pair the best adds with distinct drops, updating depth after each move
+  const plan = [], usedDrops = new Set(), saveHealthy = {...healthy};
+  let openSpots = Math.max(0, L.roster_positions.length - activeCount), faabLeft = myFaab;
+  for(const p of fa){
+    if(plan.length >= 4 || p.score < 30) break;
+    if(win!=="tank" && !p.starts && p.score < 40) continue;
+    let drop = null, why = [];
+    if(openSpots <= 0){
+      const cands = dropPool.filter(m=>!usedDrops.has(m.pid)).map(m=>({m, ...keepCost(m, p.pos)})).sort((a,b)=>a.cost-b.cost);
+      if(!cands.length) break;
+      if(cands[0].m.score >= p.score) continue;
+      drop = cands[0].m; why = cands[0].why; usedDrops.add(drop.pid);
+      if(isHealthy(drop)) healthy[drop.pos] = (healthy[drop.pos]||1)-1;
+    } else openSpots--;
+    if(isHealthy(p)) healthy[p.pos] = (healthy[p.pos]||0)+1;
+    const bid = p.bid && !p.bid.none ? Math.min(p.bid.mid, faabLeft) : null;
+    if(bid!=null) faabLeft -= bid;
+    plan.push({add:p, drop, why, bid});
+  }
+  Object.keys(healthy).forEach(k=>delete healthy[k]); Object.assign(healthy, saveHealthy);
+  const planByAdd = {}; plan.forEach((m,i)=>planByAdd[m.add.pid] = {...m, n:i+1});
+
   return {c, L, me, mine, fa, bar, starters, starterIds, dropPool, rosterFull, activeCount, myFaab, minBid, budget, rivals, rivalMax, history, median, p90,
-    win, guess, savedWin:!!saved, keepCost, need, healthy, startersAt, irOpen, myMaxRank, draftWatch, nextSeason, rounds, nameOfRoster, myRank, playoffTeams, playoffStart, week, userName, taxi, reserve};
+    win, guess, savedWin:!!saved, keepCost, plan, planByAdd, need, healthy, startersAt, irOpen, myMaxRank, draftWatch, nextSeason, rounds, nameOfRoster, myRank, playoffTeams, playoffStart, week, userName, taxi, reserve};
 }
 
 /* ---------- rendering ---------- */
@@ -490,11 +512,16 @@ function dropAdvice(p, A){
     const c = A.dropPool;
     if(!c.length) lines.push("Every bench player is protected by your takes, so there's no one to drop.");
     else {
-      const ranked = c.map(m=>({m, ...A.keepCost(m, p.pos)})).sort((a,b)=>a.cost-b.cost);
+      const inPlan = A.planByAdd[p.pid];
+      const used = new Set(A.plan.filter(x=>x.drop && x.add.pid!==p.pid).map(x=>x.drop.pid));
+      const ranked = c.filter(m=>!used.has(m.pid)).map(m=>({m, ...A.keepCost(m, p.pos)})).sort((a,b)=>a.cost-b.cost);
+      if(inPlan){ lines.push(inPlan.drop ? `Move ${inPlan.n} in your plan: drop <b>${esc(inPlan.drop.n)}</b> (${esc(inPlan.drop.pos)}, grade ${fmt(inPlan.drop.score,0)})${inPlan.why.length?` because ${inPlan.why.join("; ")}`:""}.` : `Move ${inPlan.n} in your plan: you have an open roster spot.`);
+        return `<div class="small full" style="border-left:3px solid var(--accent);padding-left:8px">${lines.join(" ")}</div>`; }
+      if(!ranked.length){ lines.push("Your drop options are already used by the moves in your plan."); return `<div class="small full" style="border-left:3px solid var(--line);padding-left:8px">${lines.join(" ")}</div>`; }
       const pick = ranked[0], alt = ranked[1];
       const why = pick.why.length ? ` (${pick.why.join("; ")})` : "";
       if(pick.m.score >= p.score) lines.push(`Not worth a roster spot: your best drop option, ${esc(pick.m.n)} (grade ${fmt(pick.m.score,0)}), grades higher.`);
-      else lines.push(`Drop to make room: <b>${esc(pick.m.n)}</b> (${esc(pick.m.pos)}, grade ${fmt(pick.m.score,0)})${why}${alt?`, or ${esc(alt.m.n)} (${esc(alt.m.pos)}, ${fmt(alt.m.score,0)})`:""}.`);
+      else lines.push(`Not in your plan. If you'd rather make this move, drop <b>${esc(pick.m.n)}</b> (${esc(pick.m.pos)}, grade ${fmt(pick.m.score,0)})${why}${alt?`, or ${esc(alt.m.n)} (${esc(alt.m.pos)}, ${fmt(alt.m.score,0)})`:""}.`);
     }
   }
   return lines.length ? `<div class="small full" style="border-left:3px solid var(--line);padding-left:8px">${lines.join(" ")}</div>` : "";
@@ -574,6 +601,15 @@ function buildCheckins(A){
   }
   return qs.slice(0,3);
 }
+function planCard(A){
+  if(!A.plan.length) return `<section class="note"><b>Your move plan</b><div class="small">No add this week beats the players you'd have to drop. Holding is fine.</div></section>`;
+  const total = A.plan.reduce((a,m)=>a+(m.bid||0),0);
+  return `<section class="note"><b>Your move plan</b> <span class="small muted">each drop used once, in order</span>
+  <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px">${A.plan.map((m,i)=>`<div class="small"><b>${i+1}.</b> Add <b>${esc(m.add.n)}</b> (${esc(m.add.pos)}, ${fmt(m.add.score,0)})${m.drop?`, drop ${esc(m.drop.n)} (${esc(m.drop.pos)}, ${fmt(m.drop.score,0)})`:", into your open spot"}${m.bid!=null?` · bid $${m.bid}`:A.myFaab<A.minBid?" · free agent after waivers clear":""}</div>`).join("")}</div>
+  ${total?`<div class="small muted" style="margin-top:6px">Total bids $${total} of your $${A.myFaab}. If an early claim wins, later bids still fit your budget.</div>`:""}
+  </section>`;
+}
+
 function checkinCard(A){
   const qs = buildCheckins(A);
   if(!qs.length) return "";
@@ -608,6 +644,7 @@ function renderWaivers(A){
   </div>
   ${askCard(A)}
   ${checkinCard(A)}
+  ${planCard(A)}
   <div class="note small">Week ${A.week}. Waivers run ${waiverDay}. ${A.win==="tank"?"Tank mode: grades are almost all dynasty value, and players who would crack your lineup lose points because they raise your max PF.":`Grades blend your mode (${({contend:70,balanced:50,rebuild:20})[A.win]}% this season, ${({contend:30,balanced:50,rebuild:80})[A.win]}% dynasty value), your lineup needs, trending adds and your takes.`} ${A.L.roster_positions.includes("SUPER_FLEX")?"Superflex values are used.":""} ${A.rosterFull?`Your roster is full, so every add needs a drop.`:""}</div>
   <div class="filters">${positions.map(p=>`<button data-pos="${p}" aria-pressed="${S.pos===p}">${p}</button>`).join("")}
     <input type="search" id="q" placeholder="Search free agents" value="${esc(S.q)}" style="flex:1;min-width:140px"></div>
