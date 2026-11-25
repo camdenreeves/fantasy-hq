@@ -345,7 +345,26 @@ function analyze(c){
   mine.forEach(p=>Object.assign(p, grade(p,true)));
 
   // drop candidates: bench, not taxi or IR, lowest score
-  const dropPool = mine.filter(p=>!starterIds.has(p.pid) && !taxi.has(p.pid) && !reserve.has(p.pid) && !(p.take && p.take.v>0)).sort((a,b)=>a.score-b.score);
+  // positional balance: how many healthy bodies each position needs (lineup starters + one backup)
+  const BAD = ["Out","IR","Sus","Doubtful","PUP","NA"];
+  const isHealthy = m => !BAD.includes(m.inj);
+  const startersAt = {}, need = {}, healthy = {};
+  for(const st of starters) if(st.p) startersAt[st.p.pos] = (startersAt[st.p.pos]||0)+1;
+  for(const pos of eligible){ const k = startersAt[pos]||0; need[pos] = k + (["QB","RB","WR","TE"].includes(pos) ? 1 : 0); }
+  for(const m of mine) if(!taxi.has(m.pid) && !reserve.has(m.pid) && isHealthy(m)) healthy[m.pos] = (healthy[m.pos]||0)+1;
+  const irOpen = Math.max(0, (L.settings.reserve_slots||0) - (me?.reserve||[]).length);
+  function keepCost(m, addPos){
+    let cost = m.score; const why = [];
+    const h = (healthy[m.pos]||0) - (isHealthy(m)?1:0) + (addPos===m.pos?1:0);
+    if(isHealthy(m) && h < (need[m.pos]||0)){ cost += 30; why.push(`would leave you ${h} healthy ${m.pos}${h===1?"":"s"} when you start ${startersAt[m.pos]||0}`); }
+    const surplus = (healthy[m.pos]||0) - (need[m.pos]||0);
+    if(surplus >= 2){ cost -= Math.min(10, surplus*3); why.push(`you're deep at ${m.pos} (${healthy[m.pos]} healthy)`); }
+    if(!isHealthy(m) && irOpen && (m.inj==="Out"||m.inj==="IR")) why.push(`you could move him to an open IR spot instead`);
+    if(addPos && addPos===m.pos) cost -= 3;
+    return {cost, why};
+  }
+  const dropPool = mine.filter(p=>!starterIds.has(p.pid) && !taxi.has(p.pid) && !reserve.has(p.pid) && !(p.take && p.take.v>0))
+    .map(p=>{ const k = keepCost(p, null); p.dropCost = k.cost; p.dropWhy = k.why; return p; }).sort((a,b)=>a.dropCost-b.dropCost);
   const activeCount = myIds.filter(x=>!taxi.has(x)&&!reserve.has(x)).length;
   const rosterFull = activeCount >= L.roster_positions.length;
 
@@ -399,7 +418,7 @@ function analyze(c){
   fa.forEach(p=>p.conf=confidence(p));
 
   return {c, L, me, mine, fa, bar, starters, starterIds, dropPool, rosterFull, activeCount, myFaab, minBid, budget, rivals, rivalMax, history, median, p90,
-    win, guess, savedWin:!!saved, myMaxRank, draftWatch, nextSeason, rounds, nameOfRoster, myRank, playoffTeams, playoffStart, week, userName, taxi, reserve};
+    win, guess, savedWin:!!saved, keepCost, need, healthy, startersAt, irOpen, myMaxRank, draftWatch, nextSeason, rounds, nameOfRoster, myRank, playoffTeams, playoffStart, week, userName, taxi, reserve};
 }
 
 /* ---------- rendering ---------- */
@@ -451,10 +470,11 @@ function dropAdvice(p, A){
     const c = A.dropPool;
     if(!c.length) lines.push("Every bench player is protected by your takes, so there's no one to drop.");
     else {
-      const same = c.find(m=>m.pos===p.pos);
-      const pick = same && same.score <= c[0].score+5 ? same : c[0];
-      if(pick.score >= p.score) lines.push(`Not worth a roster spot: your weakest droppable player, ${esc(pick.n)} (grade ${fmt(pick.score,0)}), grades higher.`);
-      else lines.push(`Drop to make room: <b>${esc(pick.n)}</b> (${esc(pick.pos)}, grade ${fmt(pick.score,0)})${c[1]&&c[1]!==pick?`, or ${esc(c[1].n)} (${fmt(c[1].score,0)})`:""}.`);
+      const ranked = c.map(m=>({m, ...A.keepCost(m, p.pos)})).sort((a,b)=>a.cost-b.cost);
+      const pick = ranked[0], alt = ranked[1];
+      const why = pick.why.length ? ` (${pick.why.join("; ")})` : "";
+      if(pick.m.score >= p.score) lines.push(`Not worth a roster spot: your best drop option, ${esc(pick.m.n)} (grade ${fmt(pick.m.score,0)}), grades higher.`);
+      else lines.push(`Drop to make room: <b>${esc(pick.m.n)}</b> (${esc(pick.m.pos)}, grade ${fmt(pick.m.score,0)})${why}${alt?`, or ${esc(alt.m.n)} (${esc(alt.m.pos)}, ${fmt(alt.m.score,0)})`:""}.`);
     }
   }
   return lines.length ? `<div class="small full" style="border-left:3px solid var(--line);padding-left:8px">${lines.join(" ")}</div>` : "";
@@ -555,9 +575,10 @@ function renderRoster(A){
   const rows = [...A.mine].sort((a,b)=>b.score-a.score);
   const tag = p => A.taxi.has(p.pid)?"Taxi":A.reserve.has(p.pid)?"IR":A.starterIds.has(p.pid)?"Starter":"Bench";
   return `<h2>Your roster, graded the same way as free agents</h2>
-  <div class="note small">Lowest-graded bench players are your drop candidates. Taxi and IR players are never suggested as drops.</div>
+  <div class="note small">Drop candidates weigh grade and positional balance: the app keeps enough healthy players to fill your lineup plus a backup at each position, and leans toward cutting where you're deepest. Taxi, IR and players you Love or Like are never suggested.
+  <div style="margin-top:6px">Healthy depth: ${Object.keys(A.need).filter(k=>A.need[k]).map(k=>`${k} ${A.healthy[k]||0}/${A.need[k]}`).join(" · ")}${A.irOpen?` · ${A.irOpen} open IR spot${A.irOpen>1?"s":""}`:""}</div></div>
   <div class="tbl"><table><thead><tr><th>Player</th><th>Role</th><th class="num">Grade</th><th class="num">ROS/wk</th><th class="num">Dyn value</th><th>Take</th></tr></thead><tbody>
-  ${rows.map(p=>`<tr><td>${esc(p.n)} <span class="muted small">${esc(p.pos)} ${esc(p.team||"")}</span></td><td>${tag(p)}${A.dropPool.slice(0,3).some(d=>d.pid===p.pid)?' <span class="pill bad">Drop cand.</span>':""}</td><td class="num">${fmt(p.score,0)}</td><td class="num">${fmt(p.rosAvg)}</td><td class="num">${p.dyn?p.dyn.toLocaleString():"–"}</td><td>${p.take?["Avoid","Fade","","Like","Love"][p.take.v+2]:""}</td></tr>`).join("")}
+  ${rows.map(p=>`<tr><td>${esc(p.n)} <span class="muted small">${esc(p.pos)} ${esc(p.team||"")}</span></td><td>${tag(p)}${A.dropPool.slice(0,3).some(d=>d.pid===p.pid)?` <span class="pill bad">Drop cand.</span>${p.dropWhy&&p.dropWhy.length?`<div class="small muted" style="white-space:normal">${esc(p.dropWhy.join("; "))}</div>`:""}`:""}</td><td class="num">${fmt(p.score,0)}</td><td class="num">${fmt(p.rosAvg)}</td><td class="num">${p.dyn?p.dyn.toLocaleString():"–"}</td><td>${p.take?["Avoid","Fade","","Like","Love"][p.take.v+2]:""}</td></tr>`).join("")}
   </tbody></table></div>`;
 }
 
