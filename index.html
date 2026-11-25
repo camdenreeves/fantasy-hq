@@ -105,7 +105,7 @@ a{color:inherit}
 
 <script>
 "use strict";
-const APP_VERSION = "2026-11-25.9";
+const APP_VERSION = "2026-11-25.10";
 const SLEEPER_USER = "camdenreeves";
 /* phones cache this page; if a newer version is published, load it */
 async function checkVersion(){
@@ -444,10 +444,13 @@ function analyze(c){
     if(plan.length >= 4 || p.score < 30) break;
     if(win!=="tank" && !p.starts && p.score < 40) continue;
     let drop = null, why = [];
+    // a bench body at a position you already cover is worth less than its grade says
+    const surplusAdd = !p.starts && (healthy[p.pos]||0) >= (need[p.pos]||0);
+    const planValue = p.score - (surplusAdd ? 10 : 0);
     if(openSpots <= 0){
       const cands = dropPool.filter(m=>!usedDrops.has(m.pid)).map(m=>({m, ...keepCost(m, p.pos)})).sort((a,b)=>a.cost-b.cost);
       if(!cands.length) break;
-      if(cands[0].m.score >= p.score) continue;
+      if(cands[0].m.score + 3 >= planValue) continue;
       drop = cands[0].m; why = cands[0].why; usedDrops.add(drop.pid);
       if(isHealthy(drop)) healthy[drop.pos] = (healthy[drop.pos]||1)-1;
     } else openSpots--;
