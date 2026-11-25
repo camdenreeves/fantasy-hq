@@ -289,15 +289,16 @@ function analyze(c){
   const fa = Object.keys(P).filter(pid=>!rosterOf[pid] && eligible.has(P[pid].pos) && (P[pid].team || P[pid].pos==="DEF")).map(info)
     .filter(p=>p.dyn>0 || p.rosAvg>=2 || p.trend>0);
 
-  const maxDyn = Math.max(1, ...fa.map(p=>p.dyn));
-  const maxNow = Math.max(1, ...fa.map(p=>p.rosAvg));
   const maxTrend = Math.max(1, ...fa.map(p=>p.trend));
   const takes = LS.get("takes", {});
 
   function grade(p, isMine){
-    const dynS = 100*Math.sqrt(p.dyn/maxDyn);
+    // absolute scales so a thin waiver pool doesn't look elite: 4,000 dynasty value or 16 pts/wk = 100
+    let ageAdj = 1;
+    if(p.age && p.pos!=="QB"){ if(win==="rebuild"){ ageAdj = p.age>=30?0.55:p.age>=28?0.8:p.age<=24?1.15:1; } else if(win==="balanced"){ ageAdj = p.age>=30?0.8:1; } }
+    const dynS = Math.min(100, 100*Math.sqrt(Math.min(p.dyn,4000)/4000)*ageAdj);
     const nowBase = win==="contend" ? (p.rosAvg*.5+p.playoffAvg*.5) : p.rosAvg;
-    const nowS = 100*Math.min(1, nowBase/maxNow);
+    const nowS = 100*Math.min(1, nowBase/16);
     const b = bar[p.pos];
     const upgrade = b ? (win==="contend"?(p.rosAvg*.5+p.playoffAvg*.5):p.rosAvg) - b.v : -99;
     const starts = !isMine && upgrade > 0.3;
@@ -339,9 +340,9 @@ function analyze(c){
   function bidFor(p, rank){
     if(myFaab <= 0 || myFaab < minBid) return {none:true};
     let lo, hi, tier;
-    if(p.score >= 75 || rank===0){ tier="Priority"; lo=.22; hi=.40; }
-    else if(p.score >= 60){ tier="Strong"; lo=.10; hi=.22; }
-    else if(p.score >= 45){ tier="Solid"; lo=.04; hi=.10; }
+    if(p.score >= 62){ tier="Priority"; lo=.22; hi=.40; }
+    else if(p.score >= 50){ tier="Strong"; lo=.10; hi=.22; }
+    else if(p.score >= 38 || rank===0){ tier="Solid"; lo=.04; hi=.10; }
     else { tier="Dart"; lo=0; hi=.04; }
     lo *= lateFactor; hi *= lateFactor;
     let a = Math.round(myFaab*lo), b = Math.round(myFaab*hi);
@@ -358,8 +359,8 @@ function analyze(c){
 
   function confidence(p){
     let n = 0;
-    if(p.dynS>=55) n++;
-    if(p.nowS>=55) n++;
+    if(p.dyn>=1200) n++;
+    if(p.rosAvg>=9) n++;
     if(p.trendRank && p.trendRank<=60) n++;
     if(p.starts) n++;
     if(p.take && p.take.v>0) n++;
@@ -395,7 +396,7 @@ function reasons(p, A){
 function bidLine(p, A){
   const bd = p.bid;
   if(bd.none){
-    return `<div class="bid"><span class="pill warn">No FAAB</span><span>You have $${A.myFaab} and the minimum bid is $${A.minBid}. You can only add him as a free agent after waivers clear.</span></div>`;
+    return `<div class="bid"><span class="pill warn">No FAAB</span><span>You have $${A.myFaab} and the minimum bid is $${A.minBid}. You can't bid, so target him as a free agent once waivers clear.</span></div>`;
   }
   return `<div class="bid"><span class="pill acc">${bd.tier}</span><span>Bid <span class="big">$${bd.mid}</span></span><span class="muted">range $${bd.lo}–$${bd.hi}</span>${bd.market!=null?`<span class="muted small">League market for similar ${esc(p.pos)}s: $${bd.market} (${bd.comps} claims)</span>`:""}${bd.capped?`<span class="muted small">Capped at richest rival's budget +$1</span>`:""}</div>`;
 }
@@ -404,8 +405,8 @@ function conflictNote(p){
   if(!p.take) return "";
   const v = p.take.v;
   const consensus = p.score - v*7;
-  if(v>0 && consensus < 40) return `<div class="conflict full">You like him more than the data does. Consensus value and projections put him near the bottom of this list. Your call matters here, but keep the bid small.</div>`;
-  if(v<0 && consensus >= 65) return `<div class="conflict full">You're lower on him than the data. He grades well on value and projections. If you're passing, make sure a rival with FAAB won't grab him.</div>`;
+  if(v>0 && consensus < 25) return `<div class="conflict full">You like him more than the data does. Consensus value and projections put him near the bottom of this list. Your call matters here, but keep the bid small.</div>`;
+  if(v<0 && consensus >= 50) return `<div class="conflict full">You're lower on him than the data. He grades well on value and projections. If you're passing, make sure a rival with FAAB won't grab him.</div>`;
   return "";
 }
 
@@ -421,7 +422,7 @@ function playerCard(p, i, A){
     <div class="score"><div class="n">${fmt(p.score,0)}</div><div class="l">${p.conf} conf.</div></div>
     <div class="pills full">
       ${p.starts?'<span class="pill good">Starts for you</span>':""}
-      ${p.dynS>=55?'<span class="pill">Dynasty asset</span>':""}
+      ${p.dyn>=1500?'<span class="pill">Dynasty asset</span>':""}
       ${p.trendRank&&p.trendRank<=30?'<span class="pill warn">Hot add</span>':""}
       ${p.inj?`<span class="pill ${injC}">${esc(p.inj)}</span>`:""}
       ${p.take?`<span class="pill acc">${["Avoid","Fade","","Like","Love"][p.take.v+2]}</span>`:""}
