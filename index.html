@@ -105,7 +105,7 @@ a{color:inherit}
 
 <script>
 "use strict";
-const APP_VERSION = "2026-11-25.10";
+const APP_VERSION = "2026-11-25.11";
 const SLEEPER_USER = "camdenreeves";
 /* phones cache this page; if a newer version is published, load it */
 async function checkVersion(){
@@ -132,6 +132,7 @@ function idb(){return new Promise((res,rej)=>{try{const r=indexedDB.open("wwhq",
 async function idbGet(k){try{const db=await idb();return await new Promise(r=>{const q=db.transaction("kv").objectStore("kv").get(k);q.onsuccess=()=>r(q.result);q.onerror=()=>r(undefined)})}catch(e){return undefined}}
 async function idbSet(k,v){try{const db=await idb();db.transaction("kv","readwrite").objectStore("kv").put(v,k)}catch(e){}}
 
+function dynNow(pid){ const A = S.cur; if(!A) return null; const p = A.mine.find(m=>m.pid===pid) || A.fa.find(m=>m.pid===pid); return p ? p.dyn : null; }
 function getTakes(){
   const base = S.baseTakes || {}, local = LS.get("takes", {});
   const out = {};
@@ -587,10 +588,12 @@ function buildCheckins(A){
   const snoozed = pid => snooze[pid] && now - snooze[pid] < 5*DAY;
   for(const [pid,t] of Object.entries(takes)){
     if(!t.v || snoozed(pid)) continue;
+    if(t.src==="app" && now - (t.ts||0) < 7*DAY) continue; // you answered recently
     const p = all[pid]; const name = p ? p.n : (t.name || S.players?.[pid]?.n || pid);
     const pl = S.players?.[pid] || {};
     const why = [];
-    if(p && p.dyn && Math.abs(p.dynTr) >= Math.max(150, p.dyn*0.15)) why.push(`his dynasty value has ${p.dynTr>0?"risen":"fallen"} ${Math.round(Math.abs(p.dynTr)/Math.max(1,p.dyn-p.dynTr)*100)}% in 30 days`);
+    if(p && p.dyn && t.dyn){ const ch = (p.dyn - t.dyn)/Math.max(1,t.dyn); if(Math.abs(ch) >= 0.15) why.push(`his dynasty value has ${ch>0?"risen":"fallen"} ${Math.round(Math.abs(ch)*100)}% since your take`); }
+    else if(p && p.dyn && Math.abs(p.dynTr) >= Math.max(150, p.dyn*0.15)) why.push(`his dynasty value has ${p.dynTr>0?"risen":"fallen"} ${Math.round(Math.abs(p.dynTr)/Math.max(1,p.dyn-p.dynTr)*100)}% in 30 days`);
     if((t.inj||null) !== (pl.inj||null) && t.inj !== undefined) why.push(pl.inj ? `he's now listed ${pl.inj}` : `he's no longer on the injury report`);
     if(t.team && pl.team && t.team !== pl.team) why.push(`he's now on ${pl.team}`);
     if(now - (t.ts||0) > 14*DAY) why.push(`you set this take ${Math.round((now-(t.ts||0))/DAY)} days ago`);
@@ -719,7 +722,7 @@ document.addEventListener("click", e=>{
     const cur = (getTakes()[id]||{}).v;
     const pl = S.players && S.players[id];
     const force = t.dataset.force==="1";
-    takes[id] = (!force && (v===0 || cur===v)) ? {v:0, ts:Date.now()} : {v, ts:Date.now(), inj:pl?pl.inj:null, team:pl?pl.team:null};
+    takes[id] = (!force && (v===0 || cur===v)) ? {v:0, ts:Date.now()} : {v, ts:Date.now(), inj:pl?pl.inj:null, team:pl?pl.team:null, dyn:dynNow(id)};
     if(force && v===0){ const sn = LS.get("snooze",{}); sn[id]=Date.now()+30*864e5; LS.set("snooze",sn); }
     LS.set("takes", takes); const y = window.scrollY; S.cur = analyze(S.cur.c); render(); window.scrollTo(0,y); return;
   }
@@ -733,7 +736,7 @@ document.addEventListener("click", e=>{
     const prev = takes[id] || {};
     const answers = (prev.answers||[]).concat([{text, ts:Date.now(), read:v}]).slice(-10);
     const newV = v==null ? (cur ?? 0) : v;
-    takes[id] = {v:newV, note:text, answers, ts:Date.now(), inj:pl?pl.inj:null, team:pl?pl.team:null};
+    takes[id] = {v:newV, note:text, answers, ts:Date.now(), inj:pl?pl.inj:null, team:pl?pl.team:null, dyn:dynNow(id)};
     LS.set("takes", takes);
     if(newV===0){ const sn = LS.get("snooze",{}); sn[id]=Date.now()+30*864e5; LS.set("snooze",sn); }
     const name = (pl && pl.n) || id;
@@ -744,7 +747,7 @@ document.addEventListener("click", e=>{
     return;
   }
   if(t.dataset.keep){ const id=t.dataset.keep; const takes=LS.get("takes",{}); const cur=getTakes()[id]||{}; const pl=S.players&&S.players[id];
-    takes[id] = {...cur, v:cur.v, ts:Date.now(), inj:pl?pl.inj:null, team:pl?pl.team:null}; delete takes[id].src; LS.set("takes",takes); S.cur=analyze(S.cur.c); render(); return; }
+    takes[id] = {...cur, v:cur.v, ts:Date.now(), inj:pl?pl.inj:null, team:pl?pl.team:null, dyn:dynNow(id)}; delete takes[id].src; LS.set("takes",takes); S.cur=analyze(S.cur.c); render(); return; }
   if(t.dataset.snooze){ const sn=LS.get("snooze",{}); sn[t.dataset.snooze]=Date.now(); LS.set("snooze",sn); render(); return; }
   if(t.id==="refresh"){ boot(true); return; }
   if(t.id==="copyTakes"){
