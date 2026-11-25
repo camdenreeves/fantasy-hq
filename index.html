@@ -105,7 +105,7 @@ a{color:inherit}
 
 <script>
 "use strict";
-const APP_VERSION = "2026-11-25.11";
+const APP_VERSION = "2026-11-25.12";
 const SLEEPER_USER = "camdenreeves";
 /* phones cache this page; if a newer version is published, load it */
 async function checkVersion(){
@@ -126,8 +126,54 @@ const FINAL_WEEK = 17;
 /* ---------- storage helpers (never required) ---------- */
 const LS = {
   get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch(e){return d}},
-  set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
+  set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){} if(k==="takes"||k==="snooze"||k==="modes") scheduleSync();},
+  raw(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
 };
+
+/* ---------- private sync through your fantasy-hq-data repo ---------- */
+const SYNC = {repo:"camdenreeves/fantasy-hq-data", path:"camden.json"};
+const b64e = str => btoa(unescape(encodeURIComponent(str)));
+const b64d = str => decodeURIComponent(escape(atob(str.replace(/\n/g,""))));
+function ghHeaders(){ return {"Authorization":"Bearer "+LS.get("ghToken",""), "Accept":"application/vnd.github+json"}; }
+function localDoc(){ return {takes:LS.get("takes",{}), snooze:LS.get("snooze",{}), modes:LS.get("modes",{})}; }
+function mergeDocs(a, b){
+  const out = {takes:{...a.takes}, snooze:{...a.snooze}, modes:{...a.modes}};
+  for(const [k,t] of Object.entries(b.takes||{})) if(!out.takes[k] || (t.ts||0) > (out.takes[k].ts||0)) out.takes[k] = t;
+  for(const [k,t] of Object.entries(b.snooze||{})) out.snooze[k] = Math.max(out.snooze[k]||0, t||0);
+  for(const [k,m] of Object.entries(b.modes||{})) if(!out.modes[k] || (m.ts||0) > (out.modes[k].ts||0)) out.modes[k] = m;
+  return out;
+}
+async function syncPull(){
+  const r = await fetch(`https://api.github.com/repos/${SYNC.repo}/contents/${SYNC.path}?t=${Date.now()}`, {headers:ghHeaders(), cache:"no-store"});
+  if(r.status===404) return {doc:{takes:{},snooze:{},modes:{}}, sha:null};
+  if(!r.ok) throw new Error(r.status===401?"token rejected":r.status===403?"token can't reach the repo":"GitHub "+r.status);
+  const j = await r.json();
+  return {doc:JSON.parse(b64d(j.content)||"{}"), sha:j.sha};
+}
+function applyDoc(d){ LS.raw("takes", d.takes||{}); LS.raw("snooze", d.snooze||{}); LS.raw("modes", d.modes||{}); }
+let syncTimer = null;
+function scheduleSync(){ if(!LS.get("ghToken",null)) return; clearTimeout(syncTimer); syncTimer = setTimeout(()=>syncPush().catch(e=>setSync("Sync failed: "+e.message)), 1200); }
+function setSync(msg){ S.syncStatus = msg; const el = document.getElementById("syncStatus"); if(el) el.textContent = msg; }
+async function syncPush(tries=2){
+  const {doc, sha} = await syncPull();
+  const merged = mergeDocs(doc, localDoc());
+  merged.updated = new Date().toISOString();
+  applyDoc(merged);
+  const r = await fetch(`https://api.github.com/repos/${SYNC.repo}/contents/${SYNC.path}`, {method:"PUT", headers:{...ghHeaders(),"Content-Type":"application/json"},
+    body:JSON.stringify({message:"Update takes from the app", content:b64e(JSON.stringify(merged,null,1)), ...(sha?{sha}:{})})});
+  if(r.status===409 && tries>0) return syncPush(tries-1);
+  if(!r.ok) throw new Error("GitHub "+r.status);
+  setSync("Synced "+new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit"}));
+}
+async function syncOnLoad(){
+  if(!LS.get("ghToken",null)) return;
+  try{
+    const {doc} = await Promise.race([syncPull(), new Promise((_,rej)=>setTimeout(()=>rej(new Error("timed out")),6000))]);
+    const merged = mergeDocs(doc, localDoc()); applyDoc(merged);
+    setSync("Synced "+new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit"}));
+    if(JSON.stringify(mergeDocs(doc,{}))!==JSON.stringify(merged)) scheduleSync();
+  }catch(e){ setSync("Sync failed: "+e.message); }
+}
 function idb(){return new Promise((res,rej)=>{try{const r=indexedDB.open("wwhq",1);r.onupgradeneeded=()=>r.result.createObjectStore("kv");r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)}catch(e){rej(e)}})}
 async function idbGet(k){try{const db=await idb();return await new Promise(r=>{const q=db.transaction("kv").objectStore("kv").get(k);q.onsuccess=()=>r(q.result);q.onerror=()=>r(undefined)})}catch(e){return undefined}}
 async function idbSet(k,v){try{const db=await idb();db.transaction("kv","readwrite").objectStore("kv").put(v,k)}catch(e){}}
@@ -178,6 +224,7 @@ async function boot(force){
     if(saved && S.leagues.some(l=>l.league_id===saved)) sel.value = saved;
     main.innerHTML = '<div class="loading">Loading players, values and projections…</div>';
     S.players = await loadPlayers(force);
+    await syncOnLoad();
     try{ S.baseTakes = await getJSON("takes.json?"+Math.floor(Date.now()/600e3)); }catch(_){ S.baseTakes = {}; }
     if(force) S.data = {};
     await loadLeague(sel.value, force);
@@ -279,7 +326,7 @@ function analyze(c){
     picks:Array.from({length:rounds},(_,k)=>({round:k+1, owner:pickOwner[(k+1)+":"+r.roster_id]}))}));
 
   // window: saved answer, else a guess
-  const saved = LS.get("window:"+c.id, null) || (S.baseTakes && S.baseTakes._modes && S.baseTakes._modes[c.id]) || null;
+  const saved = (LS.get("modes",{})[c.id]||{}).v || LS.get("window:"+c.id, null) || (S.baseTakes && S.baseTakes._modes && S.baseTakes._modes[c.id]) || null;
   let guess = "balanced";
   if(myRank && myRank<=playoffTeams) guess = "contend";
   else if(games && (s.wins||0)/games < 0.4) guess = "rebuild";
@@ -617,9 +664,11 @@ function planCard(A){
 }
 
 function checkinCard(A){
-  const qs = buildCheckins(A);
+  S.ciCache = S.ciCache || {};
+  if(!S.ciCache[A.c.id]) S.ciCache[A.c.id] = buildCheckins(A);
+  const qs = S.ciCache[A.c.id];
   if(!qs.length) return "";
-  return `<section class="ask"><h3>Check-in</h3><div class="small muted">A few questions so your takes stay current. Answers update your grades right away.</div>
+  return `<section class="ask"><h3>Check-in · ${qs.length} left</h3><div class="small muted">A few questions so your takes stay current. Answers update your grades right away. New questions come when you refresh the app.</div>
   ${qs.map(q=>`<div style="display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--line);padding-top:8px"><div>${q.text}</div>
     <textarea id="ci-${esc(q.pid)}" rows="2" style="width:100%" placeholder="Type your answer, like: still a hold, he should bounce back next year"></textarea>
     <div class="row"><button class="primary" data-ci="${esc(q.pid)}">Save answer</button><button data-snooze="${esc(q.pid)}">Ask later</button><span class="small muted" id="cimsg-${esc(q.pid)}"></span></div></div>`).join("")}
@@ -695,7 +744,9 @@ function renderTakes(){
   return `<h2>Your takes</h2>
   <div class="note small">A take is your view of the player overall, not just this week. Each step moves his grade by 7 points in every league, players you Love or Like are never suggested as drops, and the app flags it when your take disagrees with the data. Takes you tell me in chat are built in on every device. Takes you tap here are saved on this device. Use the box below to copy them between your phone and computer.</div>
   ${ids.length?`<div class="tbl"><table><thead><tr><th>Player</th><th>Take</th><th></th></tr></thead><tbody>${ids.map(id=>`<tr><td>${esc(P[id]?.n||id)} <span class="muted small">${esc(P[id]?.pos||"")}</span></td><td>${["Avoid","Fade","Neutral","Like","Love"][takes[id].v+2]}${takes[id].note?`<div class="small muted" style="white-space:normal">${esc(takes[id].note)}</div>`:""}</td><td>${takes[id].v?`<button data-take="${esc(id)}" data-v="0">Clear</button>`:""}</td></tr>`).join("")}</tbody></table></div>`:'<div class="note">No takes yet. Add them from the Waivers tab.</div>'}
-  <h2>Move takes between devices</h2>
+  <h2>Sync across your devices</h2>
+  <div class="note small">${LS.get("ghToken",null)?`Connected to your private <b>fantasy-hq-data</b> repo. Your takes, answers and modes save there and sync to every device you connect. <span id="syncStatus">${esc(S.syncStatus||"")}</span><div class="row" style="margin-top:6px"><button id="syncNow">Sync now</button><button id="syncOff">Disconnect this device</button></div>`:`Paste your GitHub token for the private <b>fantasy-hq-data</b> repo. It stays on this device and is only sent to GitHub.<div class="row" style="margin-top:6px"><input type="password" id="ghTok" placeholder="github_pat_…" style="flex:1;min-width:180px" autocomplete="off"><button class="primary" id="syncOn">Connect</button></div><span id="syncStatus">${esc(S.syncStatus||"")}</span>`}</div>
+  <h2>Move takes between devices by hand</h2>
   <div class="row"><button id="copyTakes">Copy my takes</button><span class="small muted" id="copyMsg"></span></div>
   <textarea id="takesBox" rows="3" style="width:100%" placeholder="Paste takes copied from your other device, then tap Import"></textarea>
   <div class="row"><button id="importTakes" class="primary">Import</button><span class="small muted" id="importMsg"></span></div>`;
@@ -715,7 +766,7 @@ document.addEventListener("click", e=>{
   const t = e.target.closest("button"); if(!t) return;
   if(t.dataset.tab){ S.tab = t.dataset.tab; render(); return; }
   if(t.dataset.pos){ S.pos = t.dataset.pos; render(); return; }
-  if(t.dataset.win){ S.reask = false; LS.set("window:"+S.cur.c.id, t.dataset.win); S.cur = analyze(S.cur.c); render(); return; }
+  if(t.dataset.win){ S.reask = false; const md = LS.get("modes",{}); md[S.cur.c.id] = {v:t.dataset.win, ts:Date.now()}; LS.set("modes", md); S.cur = analyze(S.cur.c); render(); return; }
   if(t.dataset.reask){ S.reask = true; render(); return; }
   if(t.dataset.take){
     const takes = LS.get("takes",{}); const v = Number(t.dataset.v); const id = t.dataset.take;
@@ -739,17 +790,22 @@ document.addEventListener("click", e=>{
     takes[id] = {v:newV, note:text, answers, ts:Date.now(), inj:pl?pl.inj:null, team:pl?pl.team:null, dyn:dynNow(id)};
     LS.set("takes", takes);
     if(newV===0){ const sn = LS.get("snooze",{}); sn[id]=Date.now()+30*864e5; LS.set("snooze",sn); }
-    const name = (pl && pl.n) || id;
+    const name = ((pl && pl.n) || id).replace(/\.$/,"");
+    if(S.ciCache && S.ciCache[S.cur.c.id]) S.ciCache[S.cur.c.id] = S.ciCache[S.cur.c.id].filter(q=>q.pid!==id);
     S.cur = analyze(S.cur.c); render();
     const flash = document.createElement("div"); flash.className = "note small";
     flash.textContent = v==null ? `Saved your note on ${name}. I couldn't tell if that changes your take, so it stays ${TAKE_LABEL[(cur??0)+2]}.` : `Saved. I read that as ${TAKE_LABEL[v+2]} on ${name}. If that's wrong, answer again or change it in My takes.`;
     const main = document.getElementById("main"); main.insertBefore(flash, main.firstChild);
     return;
   }
-  if(t.dataset.keep){ const id=t.dataset.keep; const takes=LS.get("takes",{}); const cur=getTakes()[id]||{}; const pl=S.players&&S.players[id];
+  if(t.dataset.keep){ const id=t.dataset.keep; if(S.ciCache&&S.ciCache[S.cur.c.id]) S.ciCache[S.cur.c.id]=S.ciCache[S.cur.c.id].filter(q=>q.pid!==id); const takes=LS.get("takes",{}); const cur=getTakes()[id]||{}; const pl=S.players&&S.players[id];
     takes[id] = {...cur, v:cur.v, ts:Date.now(), inj:pl?pl.inj:null, team:pl?pl.team:null, dyn:dynNow(id)}; delete takes[id].src; LS.set("takes",takes); S.cur=analyze(S.cur.c); render(); return; }
-  if(t.dataset.snooze){ const sn=LS.get("snooze",{}); sn[t.dataset.snooze]=Date.now(); LS.set("snooze",sn); render(); return; }
-  if(t.id==="refresh"){ boot(true); return; }
+  if(t.dataset.snooze){ const sn=LS.get("snooze",{}); sn[t.dataset.snooze]=Date.now(); LS.set("snooze",sn); if(S.ciCache&&S.ciCache[S.cur.c.id]) S.ciCache[S.cur.c.id]=S.ciCache[S.cur.c.id].filter(q=>q.pid!==t.dataset.snooze); render(); return; }
+  if(t.id==="refresh"){ S.ciCache = {}; boot(true); return; }
+  if(t.id==="syncOn"){ const v=(document.getElementById("ghTok").value||"").trim(); if(!v){ setSync("Paste the token first."); return; }
+    LS.raw("ghToken", v); setSync("Connecting…"); syncPush().then(()=>{ S.cur=analyze(S.cur.c); render(); }).catch(e=>{ try{localStorage.removeItem("ghToken")}catch(_){}; setSync("Couldn't connect: "+e.message+". Check the token can read and write fantasy-hq-data."); render(); }); return; }
+  if(t.id==="syncNow"){ setSync("Syncing…"); syncPush().then(()=>{ S.cur=analyze(S.cur.c); render(); }).catch(e=>setSync("Sync failed: "+e.message)); return; }
+  if(t.id==="syncOff"){ try{localStorage.removeItem("ghToken")}catch(_){}; setSync("Disconnected on this device."); render(); return; }
   if(t.id==="copyTakes"){
     const txt = JSON.stringify(LS.get("takes",{}));
     const box = document.getElementById("takesBox");
