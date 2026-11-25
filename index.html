@@ -105,7 +105,19 @@ a{color:inherit}
 
 <script>
 "use strict";
+const APP_VERSION = "2026-11-25.7";
 const SLEEPER_USER = "camdenreeves";
+/* phones cache this page; if a newer version is published, load it */
+async function checkVersion(){
+  try{
+    const r = await fetch("version.json?t="+Date.now(), {cache:"no-store"}); const j = await r.json();
+    if(j.v && j.v !== APP_VERSION){
+      let n = 0; try{ n = Number(sessionStorage.getItem("vreload")||0); sessionStorage.setItem("vreload", n+1); }catch(_){}
+      if(n < 2) location.replace(location.pathname + "?v=" + encodeURIComponent(j.v));
+    }
+  }catch(_){}
+}
+checkVersion();
 const API = "https://api.sleeper.app/v1";
 const SKILL = ["QB","RB","WR","TE","K","DEF"];
 const SLOT_ELIG = {QB:["QB"],RB:["RB"],WR:["WR"],TE:["TE"],K:["K"],DEF:["DEF"],FLEX:["RB","WR","TE"],WRRB_FLEX:["RB","WR"],REC_FLEX:["WR","TE"],SUPER_FLEX:["QB","RB","WR","TE"],IDP_FLEX:[]};
@@ -669,6 +681,7 @@ document.addEventListener("input", e=>{
   if(e.target.id==="q"){ S.q = e.target.value; const pos = e.target.selectionStart; render(); const q=document.getElementById("q"); q.focus(); q.setSelectionRange(pos,pos); }
 });
 document.getElementById("league").addEventListener("change", e=>loadLeague(e.target.value).catch(err=>{document.getElementById("main").innerHTML=`<div class="note">Couldn't load that league: ${esc(err.message)}</div>`}));
+document.addEventListener("visibilitychange", ()=>{ if(document.visibilityState==="visible") checkVersion(); });
 setInterval(()=>{ if(document.visibilityState==="visible" && S.cur) loadLeague(S.cur.c.id).catch(()=>{}); }, 3600e3);
 boot(false);
 </script>
