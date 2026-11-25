@@ -283,7 +283,7 @@ function analyze(c){
     const next = ros[0] ?? 0;
     const last = c.statArr.map(m=>m[pid]).filter(Boolean);
     const l3 = last.length ? last.reduce((a,b)=>a+b.pts,0)/last.length : null;
-    return {...p, pid, next, rosAvg, playoffAvg, l3, dyn:c.dyn[pid]?.v||0, dynPR:c.dyn[pid]?.pr, red:c.red[pid]?.v||0,
+    return {...p, pid, next, rosAvg, playoffAvg, l3, dyn:c.dyn[pid]?.v||0, dynPR:c.dyn[pid]?.pr, dynTr:c.dyn[pid]?.tr||0, red:c.red[pid]?.v||0,
       trend:trendMap[pid]?.count||0, trendRank:trendMap[pid]?.rank||null, owner:rosterOf[pid]||null, remainReg};
   }
 
@@ -486,6 +486,41 @@ function playerCard(p, i, A){
   </article>`;
 }
 
+/* check-ins: the app asks about takes that may be stale and players you have no take on */
+const TAKE_LABEL = ["Avoid","Fade","Neutral","Like","Love"];
+function buildCheckins(A){
+  const takes = getTakes(), snooze = LS.get("snooze", {}), now = Date.now(), DAY = 864e5;
+  const all = {}; [...A.mine, ...A.fa].forEach(p=>all[p.pid]=p);
+  const qs = [];
+  const snoozed = pid => snooze[pid] && now - snooze[pid] < 5*DAY;
+  for(const [pid,t] of Object.entries(takes)){
+    if(!t.v || snoozed(pid)) continue;
+    const p = all[pid]; const name = p ? p.n : (t.name || S.players?.[pid]?.n || pid);
+    const pl = S.players?.[pid] || {};
+    const why = [];
+    if(p && p.dyn && Math.abs(p.dynTr) >= Math.max(150, p.dyn*0.15)) why.push(`his dynasty value has ${p.dynTr>0?"risen":"fallen"} ${Math.round(Math.abs(p.dynTr)/Math.max(1,p.dyn-p.dynTr)*100)}% in 30 days`);
+    if((t.inj||null) !== (pl.inj||null) && t.inj !== undefined) why.push(pl.inj ? `he's now listed ${pl.inj}` : `he's no longer on the injury report`);
+    if(t.team && pl.team && t.team !== pl.team) why.push(`he's now on ${pl.team}`);
+    if(now - (t.ts||0) > 14*DAY) why.push(`you set this take ${Math.round((now-(t.ts||0))/DAY)} days ago`);
+    if(why.length) qs.push({pid, name, kind:"stale", text:`You ${TAKE_LABEL[t.v+2]} ${esc(name)}, but ${why.join(" and ")}. Still feel that way?`, cur:t.v});
+  }
+  const noTake = [...A.mine.filter(p=>p.inj && p.inj!=="Questionable" && !A.taxi.has(p.pid)), ...A.fa.slice(0,3), ...A.dropPool.slice(0,2)]
+    .filter((p,i,arr)=>arr.findIndex(x=>x.pid===p.pid)===i && !takes[p.pid] && !snoozed(p.pid));
+  for(const p of noTake){
+    const ctx = A.mine.some(m=>m.pid===p.pid) ? (p.inj?`He's on your roster and listed ${esc(p.inj)}.`:`He's near the bottom of your roster.`) : `He's a top waiver option this week.`;
+    qs.push({pid:p.pid, name:p.n, kind:"new", text:`${ctx} What's your take on ${esc(p.n)} (${esc(p.pos)}, ${esc(p.team||"FA")})?`});
+  }
+  return qs.slice(0,3);
+}
+function checkinCard(A){
+  const qs = buildCheckins(A);
+  if(!qs.length) return "";
+  return `<section class="ask"><h3>Check-in</h3><div class="small muted">A few questions so your takes stay current. Answers update your grades right away.</div>
+  ${qs.map(q=>`<div style="display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--line);padding-top:8px"><div>${q.text}</div>
+    <div class="takes">${q.kind==="stale"?`<button data-keep="${esc(q.pid)}" class="primary">Yes, keep it</button>`:""}${[2,1,0,-1,-2].map(v=>`<button data-take="${esc(q.pid)}" data-v="${v}" data-force="1" aria-pressed="${q.cur===v}">${TAKE_LABEL[v+2]}</button>`).join("")}<button data-snooze="${esc(q.pid)}">Ask later</button></div></div>`).join("")}
+  </section>`;
+}
+
 function askCard(A){
   if(A.savedWin && !S.reask) return "";
   const name = esc(A.L.name);
@@ -509,6 +544,7 @@ function renderWaivers(A){
     <div class="stat"><div class="k">Mode</div><div class="v" style="font-size:16px">${winLabel} <button class="small" data-reask="1" style="padding:1px 6px">change</button></div></div>
   </div>
   ${askCard(A)}
+  ${checkinCard(A)}
   <div class="note small">Week ${A.week}. Waivers run ${waiverDay}. ${A.win==="tank"?"Tank mode: grades are almost all dynasty value, and players who would crack your lineup lose points because they raise your max PF.":`Grades blend your mode (${({contend:70,balanced:50,rebuild:20})[A.win]}% this season, ${({contend:30,balanced:50,rebuild:80})[A.win]}% dynasty value), your lineup needs, trending adds and your takes.`} ${A.L.roster_positions.includes("SUPER_FLEX")?"Superflex values are used.":""} ${A.rosterFull?`Your roster is full, so every add needs a drop.`:""}</div>
   <div class="filters">${positions.map(p=>`<button data-pos="${p}" aria-pressed="${S.pos===p}">${p}</button>`).join("")}
     <input type="search" id="q" placeholder="Search free agents" value="${esc(S.q)}" style="flex:1;min-width:140px"></div>
@@ -577,9 +613,15 @@ document.addEventListener("click", e=>{
   if(t.dataset.take){
     const takes = LS.get("takes",{}); const v = Number(t.dataset.v); const id = t.dataset.take;
     const cur = (getTakes()[id]||{}).v;
-    takes[id] = (v===0 || cur===v) ? {v:0, ts:Date.now()} : {v, ts:Date.now()};
+    const pl = S.players && S.players[id];
+    const force = t.dataset.force==="1";
+    takes[id] = (!force && (v===0 || cur===v)) ? {v:0, ts:Date.now()} : {v, ts:Date.now(), inj:pl?pl.inj:null, team:pl?pl.team:null};
+    if(force && v===0){ const sn = LS.get("snooze",{}); sn[id]=Date.now()+30*864e5; LS.set("snooze",sn); }
     LS.set("takes", takes); const y = window.scrollY; S.cur = analyze(S.cur.c); render(); window.scrollTo(0,y); return;
   }
+  if(t.dataset.keep){ const id=t.dataset.keep; const takes=LS.get("takes",{}); const cur=getTakes()[id]||{}; const pl=S.players&&S.players[id];
+    takes[id] = {...cur, v:cur.v, ts:Date.now(), inj:pl?pl.inj:null, team:pl?pl.team:null}; delete takes[id].src; LS.set("takes",takes); S.cur=analyze(S.cur.c); render(); return; }
+  if(t.dataset.snooze){ const sn=LS.get("snooze",{}); sn[t.dataset.snooze]=Date.now(); LS.set("snooze",sn); render(); return; }
   if(t.id==="refresh"){ boot(true); return; }
   if(t.id==="copyTakes"){
     const txt = JSON.stringify(LS.get("takes",{}));
