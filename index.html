@@ -120,6 +120,14 @@ function idb(){return new Promise((res,rej)=>{try{const r=indexedDB.open("wwhq",
 async function idbGet(k){try{const db=await idb();return await new Promise(r=>{const q=db.transaction("kv").objectStore("kv").get(k);q.onsuccess=()=>r(q.result);q.onerror=()=>r(undefined)})}catch(e){return undefined}}
 async function idbSet(k,v){try{const db=await idb();db.transaction("kv","readwrite").objectStore("kv").put(v,k)}catch(e){}}
 
+function getTakes(){
+  const base = S.baseTakes || {}, local = LS.get("takes", {});
+  const out = {};
+  for(const [k,t] of Object.entries(base)){ if(k[0]!=="_" && t) out[k] = {...t, src:"chat"}; }
+  for(const [k,t] of Object.entries(local)){ if(!t) continue; if(t.v===0 && !out[k]?.note){ delete out[k]; continue; } out[k] = {...(out[k]||{}), ...t, src:"app"}; }
+  for(const k of Object.keys(out)) if(!out[k].v && !out[k].note) delete out[k];
+  return out;
+}
 const esc = s => String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmt = (n,d=1) => (n==null||isNaN(n))?"–":Number(n).toFixed(d);
 const fmtK = n => n>=1000?(n/1000).toFixed(n>=10000?0:1)+"k":String(n);
@@ -157,6 +165,7 @@ async function boot(force){
     if(saved && S.leagues.some(l=>l.league_id===saved)) sel.value = saved;
     main.innerHTML = '<div class="loading">Loading players, values and projections…</div>';
     S.players = await loadPlayers(force);
+    try{ S.baseTakes = await getJSON("takes.json?"+Math.floor(Date.now()/600e3)); }catch(_){ S.baseTakes = {}; }
     if(force) S.data = {};
     await loadLeague(sel.value, force);
   }catch(e){
@@ -198,6 +207,7 @@ async function weekPts(kind, season, week, sc){
   return out;
 }
 
+let ctxPicks = [];
 async function loadLeague(id, force){
   LS.set("league", id);
   const main = document.getElementById("main");
@@ -218,9 +228,10 @@ async function loadLeague(id, force){
     getJSON(`${API}/players/nfl/trending/add?lookback_hours=24&limit=300`).catch(()=>[]),
     Promise.all(weeks.map(w=>weekPts("projections",season,w,sc).catch(()=>({})))),
     Promise.all(pastWeeks.map(w=>weekPts("stats",season,w,sc).catch(()=>({})))),
-    Promise.all(txWeeks.map(w=>getJSON(`${API}/league/${id}/transactions/${w}`).catch(()=>[])))
-  ]);
-  const ctx = {L, id, rosters, users, sc, qbs, teams, week, weeks, pastWeeks, dyn, red, trend, projArr, statArr, tx: txArr.flat()};
+    Promise.all(txWeeks.map(w=>getJSON(`${API}/league/${id}/transactions/${w}`).catch(()=>[]))),
+    getJSON(`${API}/league/${id}/traded_picks`).catch(()=>[])
+  ]).then(a=>{ctxPicks = a[6]; return a;});
+  const ctx = {L, id, rosters, users, sc, qbs, teams, week, weeks, pastWeeks, dyn, red, trend, projArr, statArr, tx: txArr.flat(), picks: ctxPicks};
   S.cur = analyze(ctx);
   S.updated = new Date();
   render();
@@ -241,14 +252,26 @@ function analyze(c){
   const standings = [...rosters].sort((a,b)=>(b.settings.wins-a.settings.wins)||((b.settings.fpts+b.settings.fpts_decimal/100)-(a.settings.fpts+a.settings.fpts_decimal/100)));
   const myRank = me ? standings.findIndex(r=>r.roster_id===me.roster_id)+1 : null;
   const playoffTeams = L.settings.playoff_teams || 6;
+  const ppts = r => (r.settings.ppts||0) + (r.settings.ppts_decimal||0)/100;
+  const pf = r => (r.settings.fpts||0) + (r.settings.fpts_decimal||0)/100;
+  const byMax = [...rosters].sort((a,b)=>ppts(a)-ppts(b));
+  const myMaxRank = me ? byMax.findIndex(r=>r.roster_id===me.roster_id)+1 : null;
+  const nextSeason = String(Number(S.nfl.season)+1);
+  const rounds = Math.min(3, L.settings.draft_rounds || 3);
+  const pickOwner = {};
+  for(const r of rosters) for(let rd=1; rd<=rounds; rd++) pickOwner[rd+":"+r.roster_id] = r.roster_id;
+  for(const t of (c.picks||[])) if(String(t.season)===nextSeason && t.round<=rounds) pickOwner[t.round+":"+t.roster_id] = t.owner_id;
+  const nameOfRoster = rid => { const r = rosters.find(x=>x.roster_id===rid); return r ? userName(r.owner_id) : "?"; };
+  const draftWatch = byMax.map((r,i)=>({slot:i+1, rid:r.roster_id, name:userName(r.owner_id), w:r.settings.wins, l:r.settings.losses, pf:pf(r), max:ppts(r),
+    picks:Array.from({length:rounds},(_,k)=>({round:k+1, owner:pickOwner[(k+1)+":"+r.roster_id]}))}));
 
   // window: saved answer, else a guess
-  const saved = LS.get("window:"+c.id, null);
+  const saved = LS.get("window:"+c.id, null) || (S.baseTakes && S.baseTakes._modes && S.baseTakes._modes[c.id]) || null;
   let guess = "balanced";
   if(myRank && myRank<=playoffTeams) guess = "contend";
   else if(games && (s.wins||0)/games < 0.4) guess = "rebuild";
   const win = saved || guess;
-  const W = {contend:{now:.7,dyn:.3}, balanced:{now:.5,dyn:.5}, rebuild:{now:.2,dyn:.8}}[win];
+  const W = {contend:{now:.7,dyn:.3}, balanced:{now:.5,dyn:.5}, rebuild:{now:.2,dyn:.8}, tank:{now:0,dyn:.95}}[win];
 
   // per-player numbers
   function info(pid){
@@ -290,12 +313,13 @@ function analyze(c){
     .filter(p=>p.dyn>0 || p.rosAvg>=2 || p.trend>0);
 
   const maxTrend = Math.max(1, ...fa.map(p=>p.trend));
-  const takes = LS.get("takes", {});
+  const takes = getTakes();
 
   function grade(p, isMine){
     // absolute scales so a thin waiver pool doesn't look elite: 4,000 dynasty value or 16 pts/wk = 100
     let ageAdj = 1;
-    if(p.age && p.pos!=="QB"){ if(win==="rebuild"){ ageAdj = p.age>=30?0.55:p.age>=28?0.8:p.age<=24?1.15:1; } else if(win==="balanced"){ ageAdj = p.age>=30?0.8:1; } }
+    if(p.age && p.pos!=="QB"){
+    if(win==="rebuild"||win==="tank"){ ageAdj = p.age>=30?0.55:p.age>=28?0.8:p.age<=24?1.15:1; } else if(win==="balanced"){ ageAdj = p.age>=30?0.8:1; } }
     const dynS = Math.min(100, 100*Math.sqrt(Math.min(p.dyn,4000)/4000)*ageAdj);
     const nowBase = win==="contend" ? (p.rosAvg*.5+p.playoffAvg*.5) : p.rosAvg;
     const scale = p.pos==="QB" ? 22 : 16;
@@ -307,6 +331,7 @@ function analyze(c){
     const nowS = 100*Math.min(1, nowBase/scale)*fit;
     const trendS = 100*Math.sqrt(p.trend/maxTrend);
     let score = W.now*nowS + W.dyn*dynS + 0.08*trendS + (starts ? Math.min(12, upgrade*3)*W.now*1.4 : 0);
+    if(win==="tank" && starts) score -= Math.min(20, 5 + upgrade*3); // would raise your max PF
     if(p.inj==="IR" || p.inj==="Out" || p.inj==="Sus") score -= W.now*30;
     else if(p.inj==="Doubtful") score -= W.now*15;
     if(p.pos==="K" || p.pos==="DEF") score = Math.min(score, win==="contend"? 55 : 25);
@@ -320,7 +345,7 @@ function analyze(c){
   mine.forEach(p=>Object.assign(p, grade(p,true)));
 
   // drop candidates: bench, not taxi or IR, lowest score
-  const dropPool = mine.filter(p=>!starterIds.has(p.pid) && !taxi.has(p.pid) && !reserve.has(p.pid)).sort((a,b)=>a.score-b.score);
+  const dropPool = mine.filter(p=>!starterIds.has(p.pid) && !taxi.has(p.pid) && !reserve.has(p.pid) && !(p.take && p.take.v>0)).sort((a,b)=>a.score-b.score);
   const activeCount = myIds.filter(x=>!taxi.has(x)&&!reserve.has(x)).length;
   const rosterFull = activeCount >= L.roster_positions.length;
 
@@ -374,14 +399,14 @@ function analyze(c){
   fa.forEach(p=>p.conf=confidence(p));
 
   return {c, L, me, mine, fa, bar, starters, starterIds, dropPool, rosterFull, activeCount, myFaab, minBid, budget, rivals, rivalMax, history, median, p90,
-    win, guess, savedWin:!!saved, myRank, playoffTeams, playoffStart, week, userName, taxi, reserve};
+    win, guess, savedWin:!!saved, myMaxRank, draftWatch, nextSeason, rounds, nameOfRoster, myRank, playoffTeams, playoffStart, week, userName, taxi, reserve};
 }
 
 /* ---------- rendering ---------- */
 function takeButtons(pid){
-  const t = (LS.get("takes",{})[pid]||{}).v;
+  const t = (getTakes()[pid]||{}).v;
   const opts = [[2,"Love"],[1,"Like"],[-1,"Fade"],[-2,"Avoid"]];
-  return `<div class="takes"><span class="small muted">Your take:</span>${opts.map(([v,l])=>`<button data-take="${esc(pid)}" data-v="${v}" aria-pressed="${t===v}">${l}</button>`).join("")}</div>`;
+  return `<div class="takes"><span class="small muted">Your take (overall):</span>${opts.map(([v,l])=>`<button data-take="${esc(pid)}" data-v="${v}" aria-pressed="${t===v}">${l}</button>`).join("")}</div>`;
 }
 
 function reasons(p, A){
@@ -414,9 +439,30 @@ function conflictNote(p){
   return "";
 }
 
+function dropAdvice(p, A){
+  const lines = [];
+  const samePos = A.mine.filter(m=>m.pos===p.pos && !A.taxi.has(m.pid) && !A.reserve.has(m.pid));
+  const slots = A.starters.filter(s=>s.slot===p.pos).length;
+  if(!p.starts && p.pos!=="K" && p.pos!=="DEF" && slots && samePos.length >= slots+1){
+    const ahead = samePos.filter(m=>m.rosAvg>=p.rosAvg).sort((a,b)=>b.rosAvg-a.rosAvg).slice(0,3).map(m=>esc(m.n));
+    if(ahead.length) lines.push(`He'd sit behind ${ahead.join(", ")}. Only worth it as injury cover or a stash.`);
+  }
+  if(A.rosterFull){
+    const c = A.dropPool;
+    if(!c.length) lines.push("Every bench player is protected by your takes, so there's no one to drop.");
+    else {
+      const same = c.find(m=>m.pos===p.pos);
+      const pick = same && same.score <= c[0].score+5 ? same : c[0];
+      if(pick.score >= p.score) lines.push(`Not worth a roster spot: your weakest droppable player, ${esc(pick.n)} (grade ${fmt(pick.score,0)}), grades higher.`);
+      else lines.push(`Drop to make room: <b>${esc(pick.n)}</b> (${esc(pick.pos)}, grade ${fmt(pick.score,0)})${c[1]&&c[1]!==pick?`, or ${esc(c[1].n)} (${fmt(c[1].score,0)})`:""}.`);
+    }
+  }
+  return lines.length ? `<div class="small full" style="border-left:3px solid var(--line);padding-left:8px">${lines.join(" ")}</div>` : "";
+}
+
 function playerCard(p, i, A){
   const injC = p.inj ? (p.inj==="Questionable"?"warn":"bad") : "";
-  const drop = A.rosterFull && A.dropPool[0] && A.dropPool[0].score < p.score ? `<div class="small muted full">Roster is full. Suggested drop: <b>${esc(A.dropPool[0].n)}</b> (${esc(A.dropPool[0].pos)}, grade ${fmt(A.dropPool[0].score,0)}).</div>` : "";
+  const drop = dropAdvice(p, A);
   return `<article class="card">
     <div class="rank">${i+1}</div>
     <div style="min-width:0">
@@ -425,14 +471,15 @@ function playerCard(p, i, A){
     </div>
     <div class="score"><div class="n">${fmt(p.score,0)}</div><div class="l">${p.conf} conf.</div></div>
     <div class="pills full">
-      ${p.starts?'<span class="pill good">Starts for you</span>':""}
+      ${p.starts?(A.win==="tank"?'<span class="pill bad">Raises your max PF</span>':'<span class="pill good">Starts for you</span>'):""}
       ${p.dyn>=1500?'<span class="pill">Dynasty asset</span>':""}
       ${p.trendRank&&p.trendRank<=30?'<span class="pill warn">Hot add</span>':""}
       ${p.inj?`<span class="pill ${injC}">${esc(p.inj)}</span>`:""}
-      ${p.take?`<span class="pill acc">${["Avoid","Fade","","Like","Love"][p.take.v+2]}</span>`:""}
+      ${p.take&&p.take.v?`<span class="pill acc">${["Avoid","Fade","","Like","Love"][p.take.v+2]}</span>`:""}
     </div>
     <div class="why full">${reasons(p,A)}</div>
     <div class="full">${bidLine(p,A)}</div>
+    ${p.take&&p.take.note?`<div class="small full"><b>Your note:</b> ${esc(p.take.note)}</div>`:""}
     ${conflictNote(p)}
     ${drop}
     <div class="full row" style="justify-content:space-between">${takeButtons(p.pid)}<a class="small muted" href="https://news.google.com/search?q=${encodeURIComponent(p.n+" "+(p.pos==="DEF"?"":"NFL"))}" target="_blank" rel="noopener">Latest news ↗</a></div>
@@ -444,7 +491,7 @@ function askCard(A){
   const name = esc(A.L.name);
   return `<section class="ask"><h3>Quick question about ${name}</h3>
     <div>You're ${A.me?A.me.settings.wins+"-"+A.me.settings.losses:""}${A.myRank?`, ${A.myRank}${["th","st","nd","rd"][A.myRank%10>3||[11,12,13].includes(A.myRank%100)?0:A.myRank%10]} of ${A.L.total_rosters}`:""}, and ${A.playoffTeams} teams make the playoffs. Are you trying to win this year or build for next year? I guessed <b>${A.guess==="contend"?"win now":A.guess==="rebuild"?"rebuild":"balanced"}</b>.</div>
-    <div class="row"><button data-win="contend">Win now</button><button data-win="balanced">Balanced</button><button data-win="rebuild">Rebuild</button></div></section>`;
+    <div class="row"><button data-win="contend">Win now</button><button data-win="balanced">Balanced</button><button data-win="rebuild">Rebuild</button><button data-win="tank">Tank for a pick</button></div></section>`;
 }
 
 function renderWaivers(A){
@@ -452,17 +499,17 @@ function renderWaivers(A){
   let list = A.fa.filter(p=>S.pos==="ALL"||p.pos===S.pos);
   if(S.q) list = list.filter(p=>p.n.toLowerCase().includes(S.q.toLowerCase()));
   list = list.slice(0, 40);
-  const winLabel = {contend:"Win now",balanced:"Balanced",rebuild:"Rebuild"}[A.win];
+  const winLabel = {contend:"Win now",balanced:"Balanced",rebuild:"Rebuild",tank:"Tank"}[A.win];
   const waiverDay = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][A.L.settings.waiver_day_of_week ?? 3];
   return `
   <div class="summary">
     <div class="stat"><div class="k">Record</div><div class="v">${A.me?`${A.me.settings.wins}-${A.me.settings.losses}`:"–"}</div></div>
     <div class="stat"><div class="k">Your FAAB</div><div class="v">$${A.myFaab}</div></div>
-    <div class="stat"><div class="k">Richest rival</div><div class="v">$${A.rivalMax}</div></div>
+    ${A.win==="tank"?`<div class="stat"><div class="k">Max PF rank (low = good)</div><div class="v">${A.myMaxRank} of ${A.L.total_rosters}</div></div>`:`<div class="stat"><div class="k">Richest rival</div><div class="v">$${A.rivalMax}</div></div>`}
     <div class="stat"><div class="k">Mode</div><div class="v" style="font-size:16px">${winLabel} <button class="small" data-reask="1" style="padding:1px 6px">change</button></div></div>
   </div>
   ${askCard(A)}
-  <div class="note small">Week ${A.week}. Waivers run ${waiverDay}. Grades blend your mode (${Math.round({contend:70,balanced:50,rebuild:20}[A.win])}% this season, ${Math.round({contend:30,balanced:50,rebuild:80}[A.win])}% dynasty value), your lineup needs, trending adds and your takes. ${A.L.roster_positions.includes("SUPER_FLEX")?"Superflex values are used.":""} ${A.rosterFull?`Your roster is full, so every add needs a drop.`:""}</div>
+  <div class="note small">Week ${A.week}. Waivers run ${waiverDay}. ${A.win==="tank"?"Tank mode: grades are almost all dynasty value, and players who would crack your lineup lose points because they raise your max PF.":`Grades blend your mode (${({contend:70,balanced:50,rebuild:20})[A.win]}% this season, ${({contend:30,balanced:50,rebuild:80})[A.win]}% dynasty value), your lineup needs, trending adds and your takes.`} ${A.L.roster_positions.includes("SUPER_FLEX")?"Superflex values are used.":""} ${A.rosterFull?`Your roster is full, so every add needs a drop.`:""}</div>
   <div class="filters">${positions.map(p=>`<button data-pos="${p}" aria-pressed="${S.pos===p}">${p}</button>`).join("")}
     <input type="search" id="q" placeholder="Search free agents" value="${esc(S.q)}" style="flex:1;min-width:140px"></div>
   ${list.length?list.map((p,i)=>playerCard(p,i,A)).join(""):'<div class="note">No free agents match.</div>'}`;
@@ -479,7 +526,14 @@ function renderRoster(A){
 }
 
 function renderLeague(A){
-  return `<h2>Who has FAAB left</h2>
+  const myRid = A.me.roster_id;
+  const ownedOther = A.draftWatch.flatMap(t=>t.picks.filter(p=>p.owner===myRid && t.rid!==myRid).map(p=>({...p, from:t.name})));
+  const dw = `<h2>${A.nextSeason} draft order watch</h2>
+  <div class="note small">Sorted by max PF, lowest first, which is the draft order if your league uses reverse max PF. ${ownedOther.length?`You own ${ownedOther.map(p=>`${esc(p.from)}'s ${["","1st","2nd","3rd"][p.round]}`).join(", ")}. You want those teams near the top too.`:""}</div>
+  <div class="tbl"><table><thead><tr><th class="num">Pick</th><th>Team</th><th class="num">Record</th><th class="num">Max PF</th><th class="num">Gap</th>${Array.from({length:A.rounds},(_,k)=>`<th>${["1st","2nd","3rd"][k]} owner</th>`).join("")}</tr></thead><tbody>
+  ${A.draftWatch.map((t,i)=>`<tr${t.rid===myRid?' style="font-weight:700"':""}><td class="num">${t.slot}</td><td>${t.rid===myRid?"You":esc(t.name)}</td><td class="num">${t.w}-${t.l}</td><td class="num">${fmt(t.max)}</td><td class="num">${i?"+"+fmt(t.max-A.draftWatch[i-1].max):"–"}</td>${t.picks.map(p=>`<td>${p.owner===myRid?'<span class="pill acc">You</span>':esc(p.owner===t.rid?"Own":A.nameOfRoster(p.owner))}</td>`).join("")}</tr>`).join("")}
+  </tbody></table></div>`;
+  return dw + `<h2>Who has FAAB left</h2>
   <div class="tbl"><table><thead><tr><th>Team</th><th class="num">Record</th><th class="num">FAAB</th></tr></thead><tbody>
   <tr><td><b>You</b></td><td class="num">${A.me?A.me.settings.wins+"-"+A.me.settings.losses:""}</td><td class="num"><b>$${A.myFaab}</b></td></tr>
   ${A.rivals.map(r=>`<tr><td>${esc(r.name)}</td><td class="num">${r.w}-${r.l}</td><td class="num">$${r.faab}</td></tr>`).join("")}
@@ -492,12 +546,12 @@ function renderLeague(A){
 }
 
 function renderTakes(){
-  const takes = LS.get("takes",{});
+  const takes = getTakes();
   const ids = Object.keys(takes).sort((a,b)=>takes[b].v-takes[a].v);
   const P = S.players||{};
   return `<h2>Your takes</h2>
-  <div class="note small">Tap Love, Like, Fade or Avoid on any player. Each step moves his grade by 7 points, and the app flags it when your take disagrees with the data. Takes are saved on this device. Use the box below to copy them between your phone and computer.</div>
-  ${ids.length?`<div class="tbl"><table><thead><tr><th>Player</th><th>Take</th><th></th></tr></thead><tbody>${ids.map(id=>`<tr><td>${esc(P[id]?.n||id)} <span class="muted small">${esc(P[id]?.pos||"")}</span></td><td>${["Avoid","Fade","","Like","Love"][takes[id].v+2]}</td><td><button data-take="${esc(id)}" data-v="0">Clear</button></td></tr>`).join("")}</tbody></table></div>`:'<div class="note">No takes yet. Add them from the Waivers tab.</div>'}
+  <div class="note small">A take is your view of the player overall, not just this week. Each step moves his grade by 7 points in every league, players you Love or Like are never suggested as drops, and the app flags it when your take disagrees with the data. Takes you tell me in chat are built in on every device. Takes you tap here are saved on this device. Use the box below to copy them between your phone and computer.</div>
+  ${ids.length?`<div class="tbl"><table><thead><tr><th>Player</th><th>Take</th><th></th></tr></thead><tbody>${ids.map(id=>`<tr><td>${esc(P[id]?.n||id)} <span class="muted small">${esc(P[id]?.pos||"")}</span></td><td>${["Avoid","Fade","Neutral","Like","Love"][takes[id].v+2]}${takes[id].note?`<div class="small muted" style="white-space:normal">${esc(takes[id].note)}</div>`:""}</td><td>${takes[id].v?`<button data-take="${esc(id)}" data-v="0">Clear</button>`:""}</td></tr>`).join("")}</tbody></table></div>`:'<div class="note">No takes yet. Add them from the Waivers tab.</div>'}
   <h2>Move takes between devices</h2>
   <div class="row"><button id="copyTakes">Copy my takes</button><span class="small muted" id="copyMsg"></span></div>
   <textarea id="takesBox" rows="3" style="width:100%" placeholder="Paste takes copied from your other device, then tap Import"></textarea>
@@ -522,7 +576,8 @@ document.addEventListener("click", e=>{
   if(t.dataset.reask){ try{localStorage.removeItem("window:"+S.cur.c.id)}catch(_){}; S.cur = analyze(S.cur.c); render(); return; }
   if(t.dataset.take){
     const takes = LS.get("takes",{}); const v = Number(t.dataset.v); const id = t.dataset.take;
-    if(v===0 || (takes[id] && takes[id].v===v)) delete takes[id]; else takes[id] = {v, ts:Date.now()};
+    const cur = (getTakes()[id]||{}).v;
+    takes[id] = (v===0 || cur===v) ? {v:0, ts:Date.now()} : {v, ts:Date.now()};
     LS.set("takes", takes); const y = window.scrollY; S.cur = analyze(S.cur.c); render(); window.scrollTo(0,y); return;
   }
   if(t.id==="refresh"){ boot(true); return; }
