@@ -350,15 +350,23 @@ function analyze(c){
   const isHealthy = m => !BAD.includes(m.inj);
   const startersAt = {}, need = {}, healthy = {};
   for(const st of starters) if(st.p) startersAt[st.p.pos] = (startersAt[st.p.pos]||0)+1;
-  for(const pos of eligible){ const k = startersAt[pos]||0; need[pos] = k + (["QB","RB","WR","TE"].includes(pos) ? 1 : 0); }
+  const dedicated = {}; for(const sl of lineupSlots) if(SKILL.includes(sl)) dedicated[sl] = (dedicated[sl]||0)+1;
+  const sf = lineupSlots.includes("SUPER_FLEX");
+  for(const pos of eligible){ need[pos] = (dedicated[pos]||0) + (["QB","RB","WR","TE"].includes(pos) ? 1 : 0) + (pos==="QB" && sf ? 1 : 0); }
+  const flexSlots = lineupSlots.filter(sl=>["FLEX","WRRB_FLEX","REC_FLEX"].includes(sl)).length;
+  const flexNeed = ["RB","WR","TE"].reduce((a,k)=>a+(dedicated[k]||0),0) + flexSlots + 1;
   for(const m of mine) if(!taxi.has(m.pid) && !reserve.has(m.pid) && isHealthy(m)) healthy[m.pos] = (healthy[m.pos]||0)+1;
   const irOpen = Math.max(0, (L.settings.reserve_slots||0) - (me?.reserve||[]).length);
   function keepCost(m, addPos){
     let cost = m.score; const why = [];
     const h = (healthy[m.pos]||0) - (isHealthy(m)?1:0) + (addPos===m.pos?1:0);
-    if(isHealthy(m) && h < (need[m.pos]||0)){ cost += 30; why.push(`would leave you ${h} healthy ${m.pos}${h===1?"":"s"} when you start ${startersAt[m.pos]||0}`); }
+    if(isHealthy(m) && h < (need[m.pos]||0)){ cost += 30; why.push(`would leave you only ${h} healthy ${m.pos}${h===1?"":"s"}`); }
+    else if(isHealthy(m) && ["RB","WR","TE"].includes(m.pos)){
+      const flexH = ["RB","WR","TE"].reduce((a,k)=>a+(healthy[k]||0),0) - 1 + (["RB","WR","TE"].includes(addPos)?1:0);
+      if(flexH < flexNeed){ cost += 20; why.push(`would leave you short of healthy flex options`); }
+    }
     const surplus = (healthy[m.pos]||0) - (need[m.pos]||0);
-    if(surplus >= 2){ cost -= Math.min(10, surplus*3); why.push(`you're deep at ${m.pos} (${healthy[m.pos]} healthy)`); }
+    if(surplus >= 2){ cost -= Math.min(10, surplus*3); why.push(`you're deep at ${m.pos} with ${healthy[m.pos]} healthy`); }
     if(!isHealthy(m) && irOpen && (m.inj==="Out"||m.inj==="IR")) why.push(`you could move him to an open IR spot instead`);
     if(addPos && addPos===m.pos) cost -= 3;
     return {cost, why};
