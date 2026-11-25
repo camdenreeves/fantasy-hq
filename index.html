@@ -487,7 +487,7 @@ function playerCard(p, i, A){
 }
 
 function askCard(A){
-  if(A.savedWin) return "";
+  if(A.savedWin && !S.reask) return "";
   const name = esc(A.L.name);
   return `<section class="ask"><h3>Quick question about ${name}</h3>
     <div>You're ${A.me?A.me.settings.wins+"-"+A.me.settings.losses:""}${A.myRank?`, ${A.myRank}${["th","st","nd","rd"][A.myRank%10>3||[11,12,13].includes(A.myRank%100)?0:A.myRank%10]} of ${A.L.total_rosters}`:""}, and ${A.playoffTeams} teams make the playoffs. Are you trying to win this year or build for next year? I guessed <b>${A.guess==="contend"?"win now":A.guess==="rebuild"?"rebuild":"balanced"}</b>.</div>
@@ -572,8 +572,8 @@ document.addEventListener("click", e=>{
   const t = e.target.closest("button"); if(!t) return;
   if(t.dataset.tab){ S.tab = t.dataset.tab; render(); return; }
   if(t.dataset.pos){ S.pos = t.dataset.pos; render(); return; }
-  if(t.dataset.win){ LS.set("window:"+S.cur.c.id, t.dataset.win); S.cur = analyze(S.cur.c); render(); return; }
-  if(t.dataset.reask){ try{localStorage.removeItem("window:"+S.cur.c.id)}catch(_){}; S.cur = analyze(S.cur.c); render(); return; }
+  if(t.dataset.win){ S.reask = false; LS.set("window:"+S.cur.c.id, t.dataset.win); S.cur = analyze(S.cur.c); render(); return; }
+  if(t.dataset.reask){ S.reask = true; render(); return; }
   if(t.dataset.take){
     const takes = LS.get("takes",{}); const v = Number(t.dataset.v); const id = t.dataset.take;
     const cur = (getTakes()[id]||{}).v;
